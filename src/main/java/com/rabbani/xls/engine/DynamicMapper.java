@@ -8,32 +8,38 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.BiConsumer;
+import java.util.function.Supplier;
 
-public abstract class DynamicMapper<T> {
+public class DynamicMapper<T> {
 
     protected final Map<String, ColumnMapper<T>> columnMapperRegister;
 
-    public DynamicMapper() {
+    protected boolean caseSensitive;
+
+    protected Supplier<T> instanceFactory;
+
+    protected DynamicMapper() {
         columnMapperRegister = new HashMap<>();
     }
 
-    protected abstract T mappedInstance();
-
     public Instance<T> mapper(Row row){
-        return new ImplReader(row);
+        return new Impl(row);
     }
 
     public Instance<T> mapper(List<String> row){
-        return new ImplReader(row);
+        return new Impl(row);
     }
 
-    private class ImplReader implements Instance<T>{
+    private class Impl implements Instance<T>{
         private List<ColumDesignator<T>> columnDesignators = new ArrayList<>();;
 
-        public ImplReader(List<String> columnNames) {
+        public Impl(List<String> columnNames) {
             int i = 0;
             for(String columnName:columnNames){
+                if(!caseSensitive){
+                    columnName = columnName.toLowerCase();
+                }
+
                 ColumnMapper<T> mapper = columnMapperRegister.get(columnName);
                 if(mapper != null) {
                     columnDesignators.add(new ColumDesignator<>(mapper, i));
@@ -42,11 +48,15 @@ public abstract class DynamicMapper<T> {
             }
         }
 
-        public ImplReader(Row row) {
+        public Impl(Row row) {
             int i = 0;
             for(Cell cell:row){
                 String cellValue = cell.getStringCellValue();
                 if(cellValue != null) {
+                    if(!caseSensitive){
+                        cellValue = cellValue.toLowerCase();
+                    }
+
                     ColumnMapper<T> mapper = columnMapperRegister.get(cellValue);
                     if (mapper != null) {
                         columnDesignators.add(new ColumDesignator<>(mapper,i));
@@ -59,7 +69,7 @@ public abstract class DynamicMapper<T> {
 
         @Override
         public T read(Row row,ErrorHandler errorHandler) {
-            T value = mappedInstance() ;
+            T value = instanceFactory.get() ;
             for(ColumDesignator<T> columnDesignator: columnDesignators){
                 ColumnMapper<T> mapper = columnDesignator.mapper;
                 Cell cell = row.getCell(columnDesignator.column);

@@ -52,6 +52,10 @@ public class MapperProcessor extends AbstractProcessor {
 
     private static final String MAPPER_FACTORY_CLASSNAME = "AutoMapperFactory";
 
+    private static final String INSTANCE_FACTORY_FIELD = "instanceFactory";
+
+    private static final String CASE_SENSITIVE_FIELD = "caseSensitive";
+
     private Map<String, String> typeMaps = new HashMap<>();
 
     private Map<String, StaticDerSer> serializerRegistry = new HashMap<>();
@@ -63,8 +67,6 @@ public class MapperProcessor extends AbstractProcessor {
     private Filer filer;
 
     private Elements elements;
-
-    private Messager messager;
 
     private TypeElement mapType;
 
@@ -121,7 +123,6 @@ public class MapperProcessor extends AbstractProcessor {
 
     @Override
     public synchronized boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
-        messager = processingEnv.getMessager();
         types = processingEnv.getTypeUtils();
         filer = processingEnv.getFiler();
         elements = processingEnv.getElementUtils();
@@ -146,13 +147,16 @@ public class MapperProcessor extends AbstractProcessor {
         booleanType = elements.getTypeElement(Boolean.class.getName()).asType();
         stringType = elements.getTypeElement(String.class.getName()).asType();
 
-        roundEnv.getElementsAnnotatedWith(Xls.class)
-                .stream()
-                .map(TypeElement.class::cast)
-                .forEach(this::dynamicMapperDomainWriter);
+        for(Element element:roundEnv.getElementsAnnotatedWith(Xls.class)){
+            Xls xls = element.getAnnotation(Xls.class);
+            boolean isCaseSensitive = xls.caseSensitive();
+            TypeElement typeElement = (TypeElement) element;
+            dynamicMapperDomainWriter(typeElement,isCaseSensitive);
+        }
+
         if (!isMapperWritten) {
-            writeMapperFactory();
             isMapperWritten = true;
+            writeMapperFactory();
             writeSerializerRegistry();
             writeDeserializerRegistry();
         }
@@ -161,6 +165,9 @@ public class MapperProcessor extends AbstractProcessor {
     }
 
     private void writeSerializerRegistry(){
+        if(serializerRegistry.isEmpty()){
+            return;
+        }
         JavaWriter codeWriter = null;
         try {
             JavaFileObject source = filer.createSourceFile(PACKAGE + "." + SERIALIZER_CLASS);
@@ -190,6 +197,9 @@ public class MapperProcessor extends AbstractProcessor {
     }
 
     private void writeDeserializerRegistry(){
+        if(deserializerRegistry.isEmpty()){
+            return;
+        }
         JavaWriter codeWriter = null;
         try {
             JavaFileObject source = filer.createSourceFile(PACKAGE + "." + DESERIALIZER_CLASS);
@@ -265,8 +275,9 @@ public class MapperProcessor extends AbstractProcessor {
         }
     }
 
-    private void dynamicMapperDomainWriter(TypeElement target) {
+    private void dynamicMapperDomainWriter(TypeElement target,boolean isCaseSensitive) {
         try {
+            IdentifierUtils identifierUtils = new IdentifierUtils();
             String packageName = elements.getPackageOf(target).getQualifiedName().toString();
             String className = target.getSimpleName().toString() + MAPPER_IMPLEMENTATION_PREFIX;
             String qualifiedClassName = packageName + "." + className;
@@ -274,14 +285,6 @@ public class MapperProcessor extends AbstractProcessor {
 
             DeclaredType extendedType = types.getDeclaredType(dynamicMapperType, targetTypeMirror);
             typeMaps.put(target.toString(), qualifiedClassName);
-
-            ExecutableElement instanceMethodFactory = (ExecutableElement) extendedType.asElement().getEnclosedElements()
-                    .stream()
-                    .filter(element -> element.getKind() == ElementKind.METHOD &&
-                            element.getSimpleName().toString().equals(MapperConstants.MAPPED_INSTANCE_METHOD) &&
-                            element.getModifiers().contains(Modifier.ABSTRACT))
-                    .findAny().get();
-
 
             JavaFileObject source = filer.createSourceFile(qualifiedClassName);
             JavaWriter writer = new JavaWriter(source.openWriter());
@@ -295,50 +298,59 @@ public class MapperProcessor extends AbstractProcessor {
             writer.emitEmptyLine();
 
             writer.beginMethod("void", "init", EnumSet.of(Modifier.PRIVATE));
+            writer.emitStatement("%s = %s::new",INSTANCE_FACTORY_FIELD,target.getQualifiedName().toString());
+            writer.emitStatement("%s = %s",CASE_SENSITIVE_FIELD,String.valueOf(isCaseSensitive));
             DeclaredType serializerConsumer = types.getDeclaredType(uncheckedConsumerType,cellTypeMirror,targetTypeMirror);
-            IdentifierUtils identifierUtils = new IdentifierUtils();
             DeclaredType columnMapperTypeMirror = types.getDeclaredType(columnMapperType,targetTypeMirror);
             for (Element element : target.getEnclosedElements()) {
+                if(!(element instanceof VariableElement)){
+                    continue;
+                }
+
+                boolean shouldSkip = element.getModifiers().stream().anyMatch(modifier -> modifier == Modifier.TRANSIENT
+                        || modifier == Modifier.PRIVATE
+                        || modifier == Modifier.STATIC
+                        || modifier == Modifier.FINAL);
+
+                if(shouldSkip){
+                    continue;
+                }
+
+                VariableElement field = (VariableElement) element;
 
                 AnnotationMirror colDescription = Optional.<List<? extends AnnotationMirror>>ofNullable(element.getAnnotationMirrors())
                         .flatMap(annotationMirrors -> annotationMirrors.stream()
                                 .filter(annotationMirror -> annotationMirror.getAnnotationType().asElement().equals(colType))
                                 .findAny())
                         .orElse(null);
-                if (colDescription == null) {
-                    continue;
-                }
-
-                VariableElement field = (VariableElement) element;
 
                 String label = null;
                 AnnotationMirror serializer = null;
                 AnnotationMirror deserializer = null;
-                for (Map.Entry<? extends ExecutableElement, ? extends AnnotationValue> valueEntry : colDescription.getElementValues().entrySet()) {
-                    ExecutableElement executableElement = valueEntry.getKey();
-                    AnnotationValue annotationValue = valueEntry.getValue();
-                    String name = executableElement.getSimpleName().toString();
-                    if ("value".equals(name)) {
-                        label = annotationValue.getValue().toString();
-                    } else if ("serializer".equals(name)) {
-                        serializer =  (AnnotationMirror) annotationValue.getValue();
-                    } else if ("deserializer".equals(name)) {
-                        deserializer =  (AnnotationMirror) annotationValue.getValue();
+                if(colDescription != null) {
+                    for (Map.Entry<? extends ExecutableElement, ? extends AnnotationValue> valueEntry : colDescription.getElementValues().entrySet()) {
+                        ExecutableElement executableElement = valueEntry.getKey();
+                        AnnotationValue annotationValue = valueEntry.getValue();
+                        String name = executableElement.getSimpleName().toString();
+                        if ("value".equals(name)) {
+                            label = annotationValue.getValue().toString();
+                        } else if ("serializer".equals(name)) {
+                            serializer = (AnnotationMirror) annotationValue.getValue();
+                        } else if ("deserializer".equals(name)) {
+                            deserializer = (AnnotationMirror) annotationValue.getValue();
+                        }
                     }
+                }
+                else{
+                    label = field.getSimpleName().toString();
                 }
 
 
                 String serializerVar = writeSerializeImplementation(writer,identifierUtils,field,serializer,serializerConsumer,label);
                 String deserializerVar = writeDeserializeImplementation(writer,identifierUtils,field,deserializer,serializerConsumer,label);
-                writer.emitStatement("%s.put(\"%s\",new %s(\"%2$s\",%s,%s))", COLUMN_MAPPERS_REGISTER,label,columnMapperTypeMirror,serializerVar,deserializerVar);
+                writer.emitStatement("%s.put(\"%s\",new %s(\"%2$s\",%s,%s))", COLUMN_MAPPERS_REGISTER,isCaseSensitive?label:label.toLowerCase(),columnMapperTypeMirror,serializerVar,deserializerVar);
             }
             writer.endMethod();
-            writer.emitEmptyLine();
-            writer.emitAnnotation(Override.class);
-            writer.beginMethod(target.getQualifiedName().toString(), instanceMethodFactory.getSimpleName().toString(), EnumSet.of(Modifier.PUBLIC));
-            writer.emitStatement("return new %s()", target.getQualifiedName().toString());
-            writer.endMethod();
-            writer.emitEmptyLine();
             writer.endType();
             writer.close();
         } catch (Throwable t) {
@@ -349,14 +361,14 @@ public class MapperProcessor extends AbstractProcessor {
     private String writeSerializeImplementation(JavaWriter writer,
                                               IdentifierUtils identifierUtils,
                                               VariableElement fieldElement,
-                                              AnnotationMirror annotationMirror,
+                                              AnnotationMirror serializerAnnotation,
                                               DeclaredType serializerConsumer,
                                               String label) throws Exception{
 
         String serializerIdentifier = null;
-        if(annotationMirror != null) {
+        if(serializerAnnotation != null) {
             StaticDerSer staticDerSer = new StaticDerSer();
-            for (Map.Entry<? extends ExecutableElement, ? extends AnnotationValue> serEntry : annotationMirror.getElementValues().entrySet()) {
+            for (Map.Entry<? extends ExecutableElement, ? extends AnnotationValue> serEntry : serializerAnnotation.getElementValues().entrySet()) {
                 String iName = serEntry.getKey().getSimpleName().toString();
                 if ("param".equals(iName)) {
                     staticDerSer.param = serEntry.getValue().getValue().toString();
