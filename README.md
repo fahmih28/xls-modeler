@@ -7,7 +7,7 @@ annotate the model class with @com.rabbani.annotation.Xls, and only accessible f
 
 ```java
 
-import com.rabbani.xls.annotation.Serializer;
+import com.rabbani.xls.annotation.Serialize;
 
 import java.time.LocalDateTime;
 
@@ -20,7 +20,7 @@ public class Document {
     public final String date;
 
     //the following field will be used on the following snippet code
-    @Col(serializer = @Serializer(param = "yyyy-MM-dd HH:mm:ss",value = com.document.tester.Serializer.class))
+    @Col(serializer = @Serialize(param = "yyyy-MM-dd HH:mm:ss", value = com.document.tester.Serializer.class))
     public LocalDateTime timestamp;
 }
 ```
@@ -35,7 +35,7 @@ import org.apache.poi.ss.usermodel.Cell;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
-public class Serializer extends com.rabbani.xls.engine.DerSer<Document> {
+public class Serializer extends com.rabbani.xls.engine.Serializer<Document> {
     //param will be populated based on provided value on Deserializer.param() or Serializer.param
     private final DateTimeFormatter formatter;
 

@@ -32,9 +32,9 @@ public class DynamicMapper<T> {
 
     private class Impl implements Instance<T>{
         private List<ColumDesignator<T>> columnDesignators = new ArrayList<>();;
-
+        private int column;
         public Impl(List<String> columnNames) {
-            int i = 0;
+            column = 0;
             for(String columnName:columnNames){
                 if(!caseSensitive){
                     columnName = columnName.toLowerCase();
@@ -42,9 +42,10 @@ public class DynamicMapper<T> {
 
                 ColumnMapper<T> mapper = columnMapperRegister.get(columnName);
                 if(mapper != null) {
-                    columnDesignators.add(new ColumDesignator<>(mapper, i));
+                    columnDesignators.add(new ColumDesignator<>(mapper, column));
+                    column++;
                 }
-                i++;
+
             }
         }
 
@@ -70,7 +71,8 @@ public class DynamicMapper<T> {
         @Override
         public T read(Row row,ErrorHandler errorHandler) {
             T value = instanceFactory.get() ;
-            for(ColumDesignator<T> columnDesignator: columnDesignators){
+            for(int i = 0;i < column;i++){
+                ColumDesignator<T> columnDesignator = columnDesignators.get(i);
                 ColumnMapper<T> mapper = columnDesignator.mapper;
                 Cell cell = row.getCell(columnDesignator.column);
                 try {
@@ -87,7 +89,8 @@ public class DynamicMapper<T> {
 
         @Override
         public void write(Row row, T value,ErrorHandler errorHandler) {
-            for(ColumDesignator<T> columnDesignator: columnDesignators){
+            for(int i = 0; i < column;i++){
+                ColumDesignator<T> columnDesignator = columnDesignators.get(i);
                 ColumnMapper<T> mapper = columnDesignator.mapper;
                 Cell cell = row.createCell(columnDesignator.column);
                 try {

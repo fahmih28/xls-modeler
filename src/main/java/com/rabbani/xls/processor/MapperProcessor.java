@@ -1,8 +1,11 @@
 package com.rabbani.xls.processor;
 
 import com.rabbani.xls.annotation.Col;
+import com.rabbani.xls.annotation.Deserialize;
+import com.rabbani.xls.annotation.Serialize;
 import com.rabbani.xls.annotation.Xls;
-import com.rabbani.xls.engine.DerSer;
+import com.rabbani.xls.engine.Deserializer;
+import com.rabbani.xls.engine.Serializer;
 import com.rabbani.xls.engine.DynamicMapper;
 import com.rabbani.xls.engine.MapperFactory;
 import com.rabbani.xls.util.IdentifierUtils;
@@ -24,6 +27,8 @@ import javax.tools.Diagnostic;
 import javax.tools.JavaFileObject;
 import java.util.*;
 
+import static java.util.Arrays.asList;
+
 @SupportedAnnotationTypes(value = {"com.rabbani.xls.annotation.Xls"})
 @SupportedSourceVersion(SourceVersion.RELEASE_8)
 public class MapperProcessor extends AbstractProcessor {
@@ -44,9 +49,15 @@ public class MapperProcessor extends AbstractProcessor {
 
     private static final String PACKAGE = "com.rabbani.xls.engine.impl";
 
+    private static final String DER_SER_METHOD = "convert";
+
     private static final String SERIALIZER_CLASS = "__Serializer";
 
-    private static final String DESERIALIZER_CLASS = "__Deserializer";
+    private static final String DESERIALIZER_CLASS = "__Serializer";
+
+    private static final String QUALIFIED_SERIALIZER_CLASS  = PACKAGE+"."+SERIALIZER_CLASS;
+
+    private static final String QUALIFIED_DESERIALIZER_CLASS  = PACKAGE+"."+DESERIALIZER_CLASS;
 
     private static final String MAPPER_IMPLEMENTATION_PREFIX = "___Mapper";
 
@@ -68,27 +79,27 @@ public class MapperProcessor extends AbstractProcessor {
 
     private Elements elements;
 
-    private TypeElement mapType;
+    private TypeElement mapElement;
 
-    private TypeElement classType;
+    private TypeElement classElement;
 
-    private TypeElement mapperType;
+    private TypeElement mapperElement;
 
-    private TypeElement hashMapType;
+    private TypeElement hashMapElement;
 
-    private TypeElement dynamicMapperType;
+    private TypeElement dynamicMapperElement;
 
     private TypeMirror stringUtilsTypeMirror;
+
+    private TypeMirror stringTypeMirror;
 
     private TypeMirror wildcardTypeMirror;
 
     private TypeMirror cellTypeMirror;
 
-    private TypeElement uncheckedConsumerType;
+    private TypeElement uncheckedConsumerElement;
 
-    private TypeElement columnMapperType;
-
-    private TypeElement colType;
+    private TypeElement columnMapperElement;
 
     private TypeMirror byteType;
 
@@ -97,6 +108,10 @@ public class MapperProcessor extends AbstractProcessor {
     private TypeMirror integerType;
 
     private TypeMirror longType;
+
+    private ExecutableElement serializerMethodElement;
+
+    private ExecutableElement deserializerMethodElement;
 
     private TypeMirror characterType;
 
@@ -107,6 +122,12 @@ public class MapperProcessor extends AbstractProcessor {
     private TypeMirror booleanType;
 
     private TypeMirror stringType;
+
+    private TypeElement serializeElement;
+
+    private TypeElement deserializeElement;
+
+    private Messager messager;
 
     private boolean isMapperWritten = false;
 
@@ -126,16 +147,17 @@ public class MapperProcessor extends AbstractProcessor {
         types = processingEnv.getTypeUtils();
         filer = processingEnv.getFiler();
         elements = processingEnv.getElementUtils();
-        mapType = elements.getTypeElement(Map.class.getName());
-        classType = elements.getTypeElement(Class.class.getName());
-        hashMapType = elements.getTypeElement(HashMap.class.getName());
-        mapperType = elements.getTypeElement(DynamicMapper.class.getName());
-        dynamicMapperType = elements.getTypeElement(DynamicMapper.class.getName());
-        colType = elements.getTypeElement(Col.class.getName());
+        mapElement = elements.getTypeElement(Map.class.getName());
+        classElement = elements.getTypeElement(Class.class.getName());
+        hashMapElement = elements.getTypeElement(HashMap.class.getName());
+        mapperElement = elements.getTypeElement(DynamicMapper.class.getName());
+        dynamicMapperElement = elements.getTypeElement(DynamicMapper.class.getName());
+        serializeElement = elements.getTypeElement(Serialize.class.getName());
+        deserializeElement = elements.getTypeElement(Deserialize.class.getName());
         stringUtilsTypeMirror = elements.getTypeElement(StringUtils.class.getName()).asType();
-        uncheckedConsumerType = elements.getTypeElement(UncheckedConsumer.class.getName());
+        uncheckedConsumerElement = elements.getTypeElement(UncheckedConsumer.class.getName());
         wildcardTypeMirror = types.getWildcardType(null, null);
-        columnMapperType = elements.getTypeElement(DynamicMapper.ColumnMapper.class.getCanonicalName());
+        columnMapperElement = elements.getTypeElement(DynamicMapper.ColumnMapper.class.getCanonicalName());
         cellTypeMirror = elements.getTypeElement(Cell.class.getName()).asType();
         byteType = elements.getTypeElement(Byte.class.getName()).asType();
         shortType = elements.getTypeElement(Short.class.getName()).asType();
@@ -146,12 +168,15 @@ public class MapperProcessor extends AbstractProcessor {
         characterType = elements.getTypeElement(Character.class.getName()).asType();
         booleanType = elements.getTypeElement(Boolean.class.getName()).asType();
         stringType = elements.getTypeElement(String.class.getName()).asType();
+        stringTypeMirror = elements.getTypeElement(String.class.getName()).asType();
+        messager = processingEnv.getMessager();
+        initDerSerNecessaryProps();
 
-        for(Element element:roundEnv.getElementsAnnotatedWith(Xls.class)){
+        for (Element element : roundEnv.getElementsAnnotatedWith(Xls.class)) {
             Xls xls = element.getAnnotation(Xls.class);
             boolean isCaseSensitive = xls.caseSensitive();
             TypeElement typeElement = (TypeElement) element;
-            dynamicMapperDomainWriter(typeElement,isCaseSensitive);
+            dynamicMapperDomainWriter(typeElement, isCaseSensitive);
         }
 
         if (!isMapperWritten) {
@@ -164,66 +189,30 @@ public class MapperProcessor extends AbstractProcessor {
         return true;
     }
 
-    private void writeSerializerRegistry(){
-        if(serializerRegistry.isEmpty()){
-            return;
-        }
-        JavaWriter codeWriter = null;
-        try {
-            JavaFileObject source = filer.createSourceFile(PACKAGE + "." + SERIALIZER_CLASS);
-            codeWriter = new JavaWriter(source.openWriter());
-            codeWriter.emitPackage(PACKAGE);
-            codeWriter.emitEmptyLine();
-            codeWriter.beginType(SERIALIZER_CLASS,INTEFACE_KIND,EnumSet.of(Modifier.PUBLIC));
-            for(Map.Entry<String,StaticDerSer> entry:serializerRegistry.entrySet()){
-                StaticDerSer derSer = entry.getValue();
-                codeWriter.emitField(derSer.type.toString(),derSer.name,EnumSet.of(Modifier.PUBLIC,Modifier.FINAL),String.format("new %s(\"%s\")",derSer.type.toString(),derSer.param));
+    private void initDerSerNecessaryProps() {
+        TypeElement serializerElement = elements.getTypeElement(Serializer.class.getName());
+        for (Element serializerElementMember : serializerElement.getEnclosedElements()) {
+            if (serializerElementMember.getKind() != ElementKind.METHOD) {
+                continue;
             }
-            codeWriter.endType();
-        }
-        catch (Exception e){
-            throw new RuntimeException(e);
-        }
-        finally {
-            try {
-                if (codeWriter != null) {
-                    codeWriter.close();
-                }
-            }
-            catch (Exception e){
-                throw new RuntimeException(e);
-            }
-        }
-    }
 
-    private void writeDeserializerRegistry(){
-        if(deserializerRegistry.isEmpty()){
-            return;
-        }
-        JavaWriter codeWriter = null;
-        try {
-            JavaFileObject source = filer.createSourceFile(PACKAGE + "." + DESERIALIZER_CLASS);
-            codeWriter = new JavaWriter(source.openWriter());
-            codeWriter.emitPackage(PACKAGE);
-            codeWriter.emitEmptyLine();
-            codeWriter.beginType(DESERIALIZER_CLASS,INTEFACE_KIND,EnumSet.of(Modifier.PUBLIC));
-            for(Map.Entry<String,StaticDerSer> entry:deserializerRegistry.entrySet()){
-                StaticDerSer derSer = entry.getValue();
-                codeWriter.emitField(derSer.type.toString(),derSer.name,EnumSet.of(Modifier.PUBLIC,Modifier.FINAL),String.format("new %s(\"%s\")",derSer.type.toString(),derSer.param));
+            ExecutableElement element = (ExecutableElement) serializerElementMember;
+            String name = element.getSimpleName().toString();
+            if (DER_SER_METHOD.equals(name)) {
+                serializerMethodElement = element;
             }
-            codeWriter.endType();
         }
-        catch (Exception e){
-            throw new RuntimeException(e);
-        }
-        finally {
-            try {
-                if (codeWriter != null) {
-                    codeWriter.close();
-                }
+
+        TypeElement deserializerElement = elements.getTypeElement(Deserializer.class.getName());
+        for (Element deserializerElementMember : deserializerElement.getEnclosedElements()) {
+            if (deserializerElementMember.getKind() != ElementKind.METHOD) {
+                continue;
             }
-            catch (Exception e){
-                throw new RuntimeException(e);
+
+            ExecutableElement element = (ExecutableElement) deserializerElementMember;
+            String name = element.getSimpleName().toString();
+            if (DER_SER_METHOD.equals(name)) {
+                deserializerMethodElement = element;
             }
         }
     }
@@ -241,12 +230,12 @@ public class MapperProcessor extends AbstractProcessor {
             writer.beginType(MAPPER_FACTORY_CLASSNAME, CLASS_KIND, EnumSet.of(Modifier.PUBLIC), null, mapperFactory.asType().toString());
             writer.emitEmptyLine();
 
-            DeclaredType fieldMap = types.getDeclaredType(mapType, types.getDeclaredType(classType, wildcardTypeMirror), types.getDeclaredType(mapperType, wildcardTypeMirror));
+            DeclaredType fieldMap = types.getDeclaredType(mapElement, types.getDeclaredType(classElement, wildcardTypeMirror), types.getDeclaredType(mapperElement, wildcardTypeMirror));
             writer.emitField(fieldMap.toString(), REGISTER_MAPPER_FIELD, EnumSet.of(Modifier.PRIVATE, Modifier.FINAL, Modifier.STATIC));
             writer.emitEmptyLine();
 
             writer.beginInitializer(true);
-            writer.emitStatement("%s = new %s<>()", REGISTER_MAPPER_FIELD, types.getDeclaredType(hashMapType));
+            writer.emitStatement("%s = new %s<>()", REGISTER_MAPPER_FIELD, types.getDeclaredType(hashMapElement));
             for (String className : typeMaps.keySet()) {
                 String mapperType = typeMaps.get(className);
                 writer.emitStatement("%s.put(%s.class,new %s())", REGISTER_MAPPER_FIELD, className, mapperType);
@@ -265,7 +254,7 @@ public class MapperProcessor extends AbstractProcessor {
             writer.emitEmptyLine();
             writer.emitAnnotation(Override.class);
             writer.beginMethod("<" + typeVariable.toString() + ">" + execType.getReturnType().toString(), implementedMethod.getSimpleName().toString(), EnumSet.of(Modifier.PUBLIC), parameter.toString(), paramName);
-            writer.emitStatement("return (%s)%s.get(%s)", types.getDeclaredType(mapperType, typeVariable).toString(), REGISTER_MAPPER_FIELD, paramName);
+            writer.emitStatement("return (%s)%s.get(%s)", types.getDeclaredType(mapperElement, typeVariable).toString(), REGISTER_MAPPER_FIELD, paramName);
             writer.endMethod();
             writer.emitEmptyLine();
             writer.endType();
@@ -275,15 +264,16 @@ public class MapperProcessor extends AbstractProcessor {
         }
     }
 
-    private void dynamicMapperDomainWriter(TypeElement target,boolean isCaseSensitive) {
+    private void dynamicMapperDomainWriter(TypeElement target, boolean isCaseSensitive) {
         try {
             IdentifierUtils identifierUtils = new IdentifierUtils();
+            validateAccessibleConstructor(target,Collections.emptyList());
             String packageName = elements.getPackageOf(target).getQualifiedName().toString();
             String className = target.getSimpleName().toString() + MAPPER_IMPLEMENTATION_PREFIX;
             String qualifiedClassName = packageName + "." + className;
             DeclaredType targetTypeMirror = (DeclaredType) target.asType();
 
-            DeclaredType extendedType = types.getDeclaredType(dynamicMapperType, targetTypeMirror);
+            DeclaredType extendedType = types.getDeclaredType(dynamicMapperElement, targetTypeMirror);
             typeMaps.put(target.toString(), qualifiedClassName);
 
             JavaFileObject source = filer.createSourceFile(qualifiedClassName);
@@ -298,12 +288,12 @@ public class MapperProcessor extends AbstractProcessor {
             writer.emitEmptyLine();
 
             writer.beginMethod("void", "init", EnumSet.of(Modifier.PRIVATE));
-            writer.emitStatement("%s = %s::new",INSTANCE_FACTORY_FIELD,target.getQualifiedName().toString());
-            writer.emitStatement("%s = %s",CASE_SENSITIVE_FIELD,String.valueOf(isCaseSensitive));
-            DeclaredType serializerConsumer = types.getDeclaredType(uncheckedConsumerType,cellTypeMirror,targetTypeMirror);
-            DeclaredType columnMapperTypeMirror = types.getDeclaredType(columnMapperType,targetTypeMirror);
+            writer.emitStatement("%s = %s::new", INSTANCE_FACTORY_FIELD, target.getQualifiedName().toString());
+            writer.emitStatement("%s = %s", CASE_SENSITIVE_FIELD, String.valueOf(isCaseSensitive));
+            DeclaredType processFuncType = types.getDeclaredType(uncheckedConsumerElement, cellTypeMirror, targetTypeMirror);
+            DeclaredType columnMapperTypeMirror = types.getDeclaredType(columnMapperElement, targetTypeMirror);
             for (Element element : target.getEnclosedElements()) {
-                if(!(element instanceof VariableElement)){
+                if (!(element instanceof VariableElement)) {
                     continue;
                 }
 
@@ -312,43 +302,19 @@ public class MapperProcessor extends AbstractProcessor {
                         || modifier == Modifier.STATIC
                         || modifier == Modifier.FINAL);
 
-                if(shouldSkip){
+                if (shouldSkip) {
                     continue;
                 }
 
                 VariableElement field = (VariableElement) element;
+                Col col = field.getAnnotation(Col.class);
+                String label = (col != null) ? col.value() : field.getSimpleName().toString();
 
-                AnnotationMirror colDescription = Optional.<List<? extends AnnotationMirror>>ofNullable(element.getAnnotationMirrors())
-                        .flatMap(annotationMirrors -> annotationMirrors.stream()
-                                .filter(annotationMirror -> annotationMirror.getAnnotationType().asElement().equals(colType))
-                                .findAny())
-                        .orElse(null);
-
-                String label = null;
-                AnnotationMirror serializer = null;
-                AnnotationMirror deserializer = null;
-                if(colDescription != null) {
-                    for (Map.Entry<? extends ExecutableElement, ? extends AnnotationValue> valueEntry : colDescription.getElementValues().entrySet()) {
-                        ExecutableElement executableElement = valueEntry.getKey();
-                        AnnotationValue annotationValue = valueEntry.getValue();
-                        String name = executableElement.getSimpleName().toString();
-                        if ("value".equals(name)) {
-                            label = annotationValue.getValue().toString();
-                        } else if ("serializer".equals(name)) {
-                            serializer = (AnnotationMirror) annotationValue.getValue();
-                        } else if ("deserializer".equals(name)) {
-                            deserializer = (AnnotationMirror) annotationValue.getValue();
-                        }
-                    }
-                }
-                else{
-                    label = field.getSimpleName().toString();
-                }
-
-
-                String serializerVar = writeSerializeImplementation(writer,identifierUtils,field,serializer,serializerConsumer,label);
-                String deserializerVar = writeDeserializeImplementation(writer,identifierUtils,field,deserializer,serializerConsumer,label);
-                writer.emitStatement("%s.put(\"%s\",new %s(\"%2$s\",%s,%s))", COLUMN_MAPPERS_REGISTER,isCaseSensitive?label:label.toLowerCase(),columnMapperTypeMirror,serializerVar,deserializerVar);
+                String serializerIdentifier = processSerializer(field);
+                String deserializerIdentifier = processDeserializer(field);
+                String serializerVar = writeSerializeImplementation(writer, identifierUtils, field, serializerIdentifier, processFuncType, label);
+                String deserializerVar = writeDeserializeImplementation(writer, identifierUtils, field, deserializerIdentifier, processFuncType, label);
+                writer.emitStatement("%s.put(\"%s\",new %s(\"%2$s\",%s,%s))", COLUMN_MAPPERS_REGISTER, isCaseSensitive ? label : label.toLowerCase(), columnMapperTypeMirror, serializerVar, deserializerVar);
             }
             writer.endMethod();
             writer.endType();
@@ -358,195 +324,275 @@ public class MapperProcessor extends AbstractProcessor {
         }
     }
 
-    private String writeSerializeImplementation(JavaWriter writer,
-                                              IdentifierUtils identifierUtils,
-                                              VariableElement fieldElement,
-                                              AnnotationMirror serializerAnnotation,
-                                              DeclaredType serializerConsumer,
-                                              String label) throws Exception{
 
-        String serializerIdentifier = null;
-        if(serializerAnnotation != null) {
-            StaticDerSer staticDerSer = new StaticDerSer();
-            for (Map.Entry<? extends ExecutableElement, ? extends AnnotationValue> serEntry : serializerAnnotation.getElementValues().entrySet()) {
-                String iName = serEntry.getKey().getSimpleName().toString();
-                if ("param".equals(iName)) {
-                    staticDerSer.param = serEntry.getValue().getValue().toString();
-                } else if ("value".equals(iName)) {
-                    staticDerSer.type = (DeclaredType) serEntry.getValue().getValue();
-                }
-            }
+    private String processSerializer(VariableElement variableElement) throws Exception {
+        AnnotationMirror serializer = variableElement.getAnnotationMirrors()
+                .stream()
+                .filter(annotation -> annotation.getAnnotationType().asElement().equals(serializeElement))
+                .findAny()
+                .orElse(null);
 
-            serializerIdentifier = serializerRegistry.computeIfAbsent(staticDerSer.type.toString() + "#" + staticDerSer.param, identifier -> {
-                staticDerSer.name = globalIdentifier.createName(identifier);
-                return staticDerSer;
-            }).name;
+        if (serializer == null) {
+            return null;
         }
 
-
-        TypeMirror fieldTypeMirror = fieldElement.asType();
-        TypeKind fieldTypeKind = fieldTypeMirror.getKind();
-
-        String readerIdentifier = identifierUtils.createName(serializerConsumer.toString()+"Reader");
-
-        writer.beginControlFlow("%s %s = (%s,%s)->", serializerConsumer.toString(), readerIdentifier, CELL_VAR, VALUE_VAR);
-        if(serializerIdentifier != null){
-            writer.emitStatement("%s.%s.apply(%s,\"%s\",%s)",PACKAGE+"."+SERIALIZER_CLASS,serializerIdentifier,CELL_VAR,label,VALUE_VAR);
-        }
-        else {
-            writer.emitStatement("String %s = %s.getStringCellValue()", CELL_VALUE_STRING_VAR, CELL_VAR);
-
-            if (fieldTypeKind == TypeKind.BYTE || fieldTypeMirror.equals(byteType)) {
-                writer.beginControlFlow("if(!%s.isEmpty(%s))", stringUtilsTypeMirror.toString(), CELL_VALUE_STRING_VAR);
-                writer.emitStatement("%s.%s = Byte.parseByte(%s)", VALUE_VAR, fieldElement.getSimpleName(), CELL_VALUE_STRING_VAR);
-                writer.endControlFlow();
-                writer.beginControlFlow("else");
-                String setValue = fieldTypeKind.isPrimitive() ? "0" : "null";
-                writer.emitStatement("%s.%s = %s", VALUE_VAR, fieldElement.getSimpleName(), setValue);
-                writer.endControlFlow();
-            } else if (fieldTypeKind == TypeKind.SHORT || fieldTypeMirror.equals(shortType)) {
-                writer.beginControlFlow("if(!%s.isEmpty(%s))", stringUtilsTypeMirror.toString(), CELL_VALUE_STRING_VAR);
-                writer.emitStatement("%s.%s = Short.parseShort(%s)", VALUE_VAR, fieldElement.getSimpleName(), CELL_VALUE_STRING_VAR);
-                writer.endControlFlow();
-                writer.beginControlFlow("else");
-                String setValue = fieldTypeKind.isPrimitive() ? "0" : "null";
-                writer.emitStatement("%s.%s = %s", VALUE_VAR, fieldElement.getSimpleName(), setValue);
-                writer.endControlFlow();
-            } else if (fieldTypeKind == TypeKind.INT || fieldTypeMirror.equals(integerType)) {
-                writer.beginControlFlow("if(!%s.isEmpty(%s))", stringUtilsTypeMirror.toString(), CELL_VALUE_STRING_VAR);
-                writer.emitStatement("%s.%s = Integer.parseInt(%s)", VALUE_VAR, fieldElement.getSimpleName(), CELL_VALUE_STRING_VAR);
-                writer.endControlFlow();
-                writer.beginControlFlow("else");
-                String setValue = fieldTypeKind.isPrimitive() ? "0" : "null";
-                writer.emitStatement("%s.%s = %s", VALUE_VAR, fieldElement.getSimpleName(), setValue);
-                writer.endControlFlow();
-            } else if (fieldTypeKind == TypeKind.LONG || fieldTypeMirror.equals(longType)) {
-                writer.beginControlFlow("if(!%s.isEmpty(%s))", stringUtilsTypeMirror.toString(), CELL_VALUE_STRING_VAR);
-                writer.emitStatement("%s.%s = Long.parseLong(%s)", VALUE_VAR, fieldElement.getSimpleName(), CELL_VALUE_STRING_VAR);
-                writer.endControlFlow();
-                writer.beginControlFlow("else");
-                String setValue = fieldTypeKind.isPrimitive() ? "0L" : "null";
-                writer.emitStatement("%s.%s = %s", VALUE_VAR, fieldElement.getSimpleName(), setValue);
-                writer.endControlFlow();
-            } else if (fieldTypeKind == TypeKind.FLOAT || fieldTypeMirror.equals(floatType)) {
-                writer.beginControlFlow("if(!%s.isEmpty(%s))", stringUtilsTypeMirror.toString(), CELL_VALUE_STRING_VAR);
-                writer.emitStatement("%s.%s = Float.parseFloat(%s)", VALUE_VAR, fieldElement.getSimpleName(), CELL_VALUE_STRING_VAR);
-                writer.endControlFlow();
-                writer.beginControlFlow("else");
-                String setValue = fieldTypeKind.isPrimitive() ? "0F" : "null";
-                writer.emitStatement("%s.%s = %s", VALUE_VAR, fieldElement.getSimpleName(), setValue);
-                writer.endControlFlow();
-            } else if (fieldTypeKind == TypeKind.DOUBLE || fieldTypeMirror.equals(doubleType)) {
-                writer.beginControlFlow("if(!%s.isEmpty(%s))", stringUtilsTypeMirror.toString(), CELL_VALUE_STRING_VAR);
-                writer.emitStatement("%s.%s = Double.parseDouble(%s)", VALUE_VAR, fieldElement.getSimpleName(), CELL_VALUE_STRING_VAR);
-                writer.endControlFlow();
-                writer.beginControlFlow("else");
-                String setValue = fieldTypeKind.isPrimitive() ? "0D" : "null";
-                writer.emitStatement("%s.%s = %s", VALUE_VAR, fieldElement.getSimpleName(), setValue);
-                writer.endControlFlow();
-            } else if (fieldTypeKind == TypeKind.CHAR || fieldTypeMirror.equals(characterType)) {
-                writer.beginControlFlow("if(!%s.isEmpty(%s))", stringUtilsTypeMirror.toString(), CELL_VALUE_STRING_VAR);
-                writer.emitStatement("%s.%s = %s.charAt(0)", VALUE_VAR, fieldElement.getSimpleName(), CELL_VALUE_STRING_VAR);
-                writer.endControlFlow();
-                writer.beginControlFlow("else");
-                String setValue = fieldTypeKind.isPrimitive() ? "\u0000" : "null";
-                writer.emitStatement("%s.%s = %s", VALUE_VAR, fieldElement.getSimpleName(), setValue);
-                writer.endControlFlow();
-            } else if (fieldTypeKind == TypeKind.BOOLEAN || fieldTypeMirror.equals(booleanType)) {
-                writer.beginControlFlow("if(!%s.isEmpty(%s))", stringUtilsTypeMirror.toString(), CELL_VALUE_STRING_VAR);
-                writer.emitStatement("%s.%s = Boolean.parseBoolean(%s)", VALUE_VAR, fieldElement.getSimpleName(), CELL_VALUE_STRING_VAR);
-                writer.endControlFlow();
-                writer.beginControlFlow("else");
-                String setValue = fieldTypeKind.isPrimitive() ? "\u0000" : "null";
-                writer.emitStatement("%s.%s = %s", VALUE_VAR, fieldElement.getSimpleName(), setValue);
-                writer.endControlFlow();
-            } else if (fieldTypeMirror.equals(stringType)) {
-                writer.emitStatement("%s.%s = !%s.isEmpty(%s)?%s:%s", VALUE_VAR, fieldElement.getSimpleName(), stringUtilsTypeMirror.toString(), CELL_VALUE_STRING_VAR, CELL_VALUE_STRING_VAR, "null");
+        StaticDerSer staticDerSer = new StaticDerSer();
+        for (Map.Entry<? extends ExecutableElement, ? extends AnnotationValue> serEntry : serializer.getElementValues().entrySet()) {
+            String iName = serEntry.getKey().getSimpleName().toString();
+            if ("param".equals(iName)) {
+                staticDerSer.param = serEntry.getValue().getValue().toString();
+            } else if ("value".equals(iName)) {
+                staticDerSer.type = (DeclaredType) serEntry.getValue().getValue();
             }
         }
-        writer.endControlFlow("");
-        return readerIdentifier;
+
+        TypeMirror fieldTypeMirror = variableElement.asType();
+
+
+        Set<Modifier> implementedSerializer = staticDerSer.type.asElement().getModifiers();
+        if (!implementedSerializer.contains(Modifier.PUBLIC) || implementedSerializer.contains(Modifier.ABSTRACT)) {
+            raiseError(variableElement, staticDerSer.type.toString() + " must be public and non abstract class");
+        }
+
+        validateAccessibleConstructor((TypeElement) staticDerSer.type.asElement(),asList(stringTypeMirror));
+
+        TypeMirror serializeParamType = ((ExecutableType) types.asMemberOf(staticDerSer.type, serializerMethodElement)).getParameterTypes().get(0);
+        if (!types.isAssignable(fieldTypeMirror, serializeParamType)) {
+            raiseError(variableElement, "has serialize of type "+staticDerSer.type.toString() + " type <" + fieldTypeMirror.toString() + "> cannot be assigned to <" + serializeParamType.toString() + ">");
+        }
+
+        return serializerRegistry.computeIfAbsent(staticDerSer.type.toString() + "#" + staticDerSer.param, identifier -> {
+            staticDerSer.name = globalIdentifier.createName(identifier);
+            return staticDerSer;
+        }).name;
+    }
+
+    private void validateAccessibleConstructor(TypeElement typeElement,List<? extends TypeMirror> requiredParamTypes) {
+        if (!elements.getAllMembers(typeElement)
+                .stream()
+                .filter(element -> element.getKind() == ElementKind.CONSTRUCTOR)
+                .map(ExecutableElement.class::cast)
+                .anyMatch(executableElement -> {
+                    if(executableElement.getModifiers().contains(Modifier.PUBLIC)) {
+                            List<? extends VariableElement> constParams = executableElement.getParameters();
+                            for(int i = 0;i < constParams.size();i++) {
+                                TypeMirror paramType = constParams.get(i).asType();
+                                if(!types.isAssignable(requiredParamTypes.get(i),paramType)){
+                                    return  false;
+                                }
+                            }
+                            return true;
+                    }
+                    return false;
+                })
+        ) {
+            raiseError(typeElement, requiredParamTypes.isEmpty()?"no-args constructor is required":"required constructor with these type "+requiredParamTypes);
+        }
+    }
+
+    private String processDeserializer(VariableElement variableElement) throws Exception {
+        AnnotationMirror deserializer = variableElement.getAnnotationMirrors()
+                .stream()
+                .filter(annotation -> annotation.getAnnotationType().asElement().equals(deserializeElement))
+                .findAny()
+                .orElse(null);
+
+        if (deserializer == null) {
+            return null;
+        }
+
+        StaticDerSer staticDerSer = new StaticDerSer();
+        for (Map.Entry<? extends ExecutableElement, ? extends AnnotationValue> deserEntry : deserializer.getElementValues().entrySet()) {
+            String iName = deserEntry.getKey().getSimpleName().toString();
+            if ("param".equals(iName)) {
+                staticDerSer.param = deserEntry.getValue().getValue().toString();
+            } else if ("value".equals(iName)) {
+                staticDerSer.type = (DeclaredType) deserEntry.getValue().getValue();
+            }
+        }
+
+        TypeMirror fieldTypeMirror = variableElement.asType();
+
+        Set<Modifier> implementedDeserializer = staticDerSer.type.asElement().getModifiers();
+        if (!implementedDeserializer.contains(Modifier.PUBLIC) || implementedDeserializer.contains(Modifier.ABSTRACT)) {
+            raiseError(variableElement, staticDerSer.type.toString() + " must be public and non abstract class");
+        }
+
+        validateAccessibleConstructor((TypeElement) staticDerSer.type.asElement(),asList(stringTypeMirror));
+
+        TypeMirror deserializeParamType = ((ExecutableType) types.asMemberOf(staticDerSer.type, deserializerMethodElement)).getParameterTypes().get(0);
+        if (!types.isAssignable(deserializeParamType, fieldTypeMirror)) {
+            raiseError(variableElement, "has deserialize of type "+staticDerSer.type.toString() + " type <" + deserializeParamType.toString() + "> cannot be assigned to <" + fieldTypeMirror.toString() + ">");
+        }
+
+        return deserializerRegistry.computeIfAbsent(staticDerSer.type.toString() + "#" + staticDerSer.param, identifier -> {
+            staticDerSer.name = globalIdentifier.createName(identifier);
+            return staticDerSer;
+        }).name;
+    }
+
+    private void raiseError(VariableElement element, String message) {
+        String rootCause = element.getEnclosingElement() + "." + element.getSimpleName();
+        messager.printMessage(Diagnostic.Kind.ERROR, "Error at " + rootCause + ": " + message, element);
+    }
+
+    private void raiseError(TypeElement element, String message) {
+        String rootCause = element.getEnclosingElement() + "." + element.getSimpleName();
+        messager.printMessage(Diagnostic.Kind.ERROR, "Error at " + rootCause + ": " + message, element);
     }
 
     private String writeDeserializeImplementation(JavaWriter writer,
                                                 IdentifierUtils identifierUtils,
                                                 VariableElement fieldElement,
-                                                AnnotationMirror annotationMirror,
+                                                String deserializerIdentifier,
                                                 DeclaredType serializerConsumer,
-                                                String label) throws Exception{
+                                                String label) throws Exception {
 
-        String deserializerIdentifier = null;
-        if(annotationMirror != null) {
-            StaticDerSer staticDerSer = new StaticDerSer();
-            for (Map.Entry<? extends ExecutableElement, ? extends AnnotationValue> serEntry : annotationMirror.getElementValues().entrySet()) {
-                String iName = serEntry.getKey().getSimpleName().toString();
-                if ("param".equals(iName)) {
-                    staticDerSer.param = serEntry.getValue().getValue().toString();
-                } else if ("value".equals(iName)) {
-                    staticDerSer.type = (DeclaredType) serEntry.getValue().getValue();
-                }
-            }
 
-            deserializerIdentifier = deserializerRegistry.computeIfAbsent(staticDerSer.type.toString() + "#" + staticDerSer.param, identifier -> {
-                staticDerSer.name = globalIdentifier.createName(identifier);
-                return staticDerSer;
-            }).name;
+        TypeMirror fieldTypeMirror = fieldElement.asType();
+        TypeKind fieldTypeKind = fieldTypeMirror.getKind();
+
+        String readerIdentifier = identifierUtils.createName(serializerConsumer.toString() + "Reader");
+
+        String fieldName = fieldElement.getSimpleName().toString();
+        writer.beginControlFlow("%s %s = (%s,%s)->", serializerConsumer.toString(), readerIdentifier, CELL_VAR, VALUE_VAR);
+        writer.emitStatement("String %s = %s.getStringCellValue()", CELL_VALUE_STRING_VAR, CELL_VAR);
+        if (deserializerIdentifier != null) {
+            writer.emitStatement("%s.%s = %s.%s.%s(%s)",VALUE_VAR, fieldName,QUALIFIED_DESERIALIZER_CLASS, deserializerIdentifier,DER_SER_METHOD,CELL_VALUE_STRING_VAR);
+        } else if (fieldTypeKind == TypeKind.BYTE || fieldTypeMirror.equals(byteType)) {
+            writer.beginControlFlow("if(!%s.isEmpty(%s))", stringUtilsTypeMirror.toString(), CELL_VALUE_STRING_VAR);
+            writer.emitStatement("%s.%s = Byte.parseByte(%s)", VALUE_VAR, fieldName, CELL_VALUE_STRING_VAR);
+            writer.endControlFlow();
+            writer.beginControlFlow("else");
+            String setValue = fieldTypeKind.isPrimitive() ? "0" : "null";
+            writer.emitStatement("%s.%s = %s", VALUE_VAR,fieldName, setValue);
+            writer.endControlFlow();
+        } else if (fieldTypeKind == TypeKind.SHORT || fieldTypeMirror.equals(shortType)) {
+            writer.beginControlFlow("if(!%s.isEmpty(%s))", stringUtilsTypeMirror.toString(), CELL_VALUE_STRING_VAR);
+            writer.emitStatement("%s.%s = Short.parseShort(%s)", VALUE_VAR,fieldName, CELL_VALUE_STRING_VAR);
+            writer.endControlFlow();
+            writer.beginControlFlow("else");
+            String setValue = fieldTypeKind.isPrimitive() ? "0" : "null";
+            writer.emitStatement("%s.%s = %s", VALUE_VAR,fieldName, setValue);
+            writer.endControlFlow();
+        } else if (fieldTypeKind == TypeKind.INT || fieldTypeMirror.equals(integerType)) {
+            writer.beginControlFlow("if(!%s.isEmpty(%s))", stringUtilsTypeMirror.toString(), CELL_VALUE_STRING_VAR);
+            writer.emitStatement("%s.%s = Integer.parseInt(%s)", VALUE_VAR,fieldName, CELL_VALUE_STRING_VAR);
+            writer.endControlFlow();
+            writer.beginControlFlow("else");
+            String setValue = fieldTypeKind.isPrimitive() ? "0" : "null";
+            writer.emitStatement("%s.%s = %s", VALUE_VAR,fieldName, setValue);
+            writer.endControlFlow();
+        } else if (fieldTypeKind == TypeKind.LONG || fieldTypeMirror.equals(longType)) {
+            writer.beginControlFlow("if(!%s.isEmpty(%s))", stringUtilsTypeMirror.toString(), CELL_VALUE_STRING_VAR);
+            writer.emitStatement("%s.%s = Long.parseLong(%s)", VALUE_VAR,fieldName, CELL_VALUE_STRING_VAR);
+            writer.endControlFlow();
+            writer.beginControlFlow("else");
+            String setValue = fieldTypeKind.isPrimitive() ? "0L" : "null";
+            writer.emitStatement("%s.%s = %s", VALUE_VAR,fieldName, setValue);
+            writer.endControlFlow();
+        } else if (fieldTypeKind == TypeKind.FLOAT || fieldTypeMirror.equals(floatType)) {
+            writer.beginControlFlow("if(!%s.isEmpty(%s))", stringUtilsTypeMirror.toString(), CELL_VALUE_STRING_VAR);
+            writer.emitStatement("%s.%s = Float.parseFloat(%s)", VALUE_VAR,fieldName, CELL_VALUE_STRING_VAR);
+            writer.endControlFlow();
+            writer.beginControlFlow("else");
+            String setValue = fieldTypeKind.isPrimitive() ? "0F" : "null";
+            writer.emitStatement("%s.%s = %s", VALUE_VAR,fieldName, setValue);
+            writer.endControlFlow();
+        } else if (fieldTypeKind == TypeKind.DOUBLE || fieldTypeMirror.equals(doubleType)) {
+            writer.beginControlFlow("if(!%s.isEmpty(%s))", stringUtilsTypeMirror.toString(), CELL_VALUE_STRING_VAR);
+            writer.emitStatement("%s.%s = Double.parseDouble(%s)", VALUE_VAR,fieldName, CELL_VALUE_STRING_VAR);
+            writer.endControlFlow();
+            writer.beginControlFlow("else");
+            String setValue = fieldTypeKind.isPrimitive() ? "0D" : "null";
+            writer.emitStatement("%s.%s = %s", VALUE_VAR,fieldName, setValue);
+            writer.endControlFlow();
+        } else if (fieldTypeKind == TypeKind.CHAR || fieldTypeMirror.equals(characterType)) {
+            writer.beginControlFlow("if(!%s.isEmpty(%s))", stringUtilsTypeMirror.toString(), CELL_VALUE_STRING_VAR);
+            writer.emitStatement("%s.%s = %s.charAt(0)", VALUE_VAR,fieldName, CELL_VALUE_STRING_VAR);
+            writer.endControlFlow();
+            writer.beginControlFlow("else");
+            String setValue = fieldTypeKind.isPrimitive() ? "\u0000" : "null";
+            writer.emitStatement("%s.%s = %s", VALUE_VAR,fieldName, setValue);
+            writer.endControlFlow();
+        } else if (fieldTypeKind == TypeKind.BOOLEAN || fieldTypeMirror.equals(booleanType)) {
+            writer.beginControlFlow("if(!%s.isEmpty(%s))", stringUtilsTypeMirror.toString(), CELL_VALUE_STRING_VAR);
+            writer.emitStatement("%s.%s = Boolean.parseBoolean(%s)", VALUE_VAR,fieldName, CELL_VALUE_STRING_VAR);
+            writer.endControlFlow();
+            writer.beginControlFlow("else");
+            String setValue = fieldTypeKind.isPrimitive() ? "\u0000" : "null";
+            writer.emitStatement("%s.%s = %s", VALUE_VAR,fieldName, setValue);
+            writer.endControlFlow();
+        } else if (fieldTypeMirror.equals(stringType)) {
+            writer.emitStatement("%s.%s = !%s.isEmpty(%s)?%s:%s", VALUE_VAR,fieldName, stringUtilsTypeMirror.toString(), CELL_VALUE_STRING_VAR, CELL_VALUE_STRING_VAR, "null");
         }
 
+        writer.endControlFlow("");
+        return readerIdentifier;
+    }
+
+    private String writeSerializeImplementation(JavaWriter writer,
+                                                  IdentifierUtils identifierUtils,
+                                                  VariableElement fieldElement,
+                                                  String serializerIdentifier,
+                                                  DeclaredType serializerConsumer,
+                                                  String label) throws Exception {
 
         TypeMirror fieldTypeMirror = fieldElement.asType();
         TypeKind fieldTypeKind = fieldTypeMirror.getKind();
         String fieldName = fieldElement.getSimpleName().toString();
 
-        String deserializeIdentifier = identifierUtils.createName(serializerConsumer.toString()+"Writer");
+        String deserializeIdentifier = identifierUtils.createName(serializerConsumer.toString() + "Writer");
 
         writer.beginControlFlow("%s %s = (%s,%s)->", serializerConsumer.toString(), deserializeIdentifier, CELL_VAR, VALUE_VAR);
-        if(deserializerIdentifier != null){
-            writer.emitStatement("%s.%s.apply(%s,\"%s\",%s)",PACKAGE+"."+SERIALIZER_CLASS,deserializerIdentifier,CELL_VAR,label,VALUE_VAR);
-        }
-        else {
+        if (serializerIdentifier != null) {
+            writer.emitStatement("String %s = %s.%s.%s(%s.%s)", CELL_VALUE_STRING_VAR,QUALIFIED_SERIALIZER_CLASS, serializerIdentifier, DER_SER_METHOD, VALUE_VAR,fieldName);
+            writer.beginControlFlow("if(%s != null)",CELL_VALUE_STRING_VAR);
+            writer.emitStatement("%s.setCellValue(%s)",CELL_VAR,CELL_VALUE_STRING_VAR);
+            writer.endControlFlow();
+        } else {
             if (fieldTypeKind == TypeKind.BYTE || fieldTypeMirror.equals(byteType)) {
-                writer.emitStatement("Byte %s = %s.%s", CELL_VALUE_STRING_VAR, VALUE_VAR,fieldName);
+                writer.emitStatement("Byte %s = %s.%s", CELL_VALUE_STRING_VAR, VALUE_VAR, fieldName);
                 writer.beginControlFlow("if(%s != null)", CELL_VALUE_STRING_VAR);
                 writer.emitStatement("%s.setCellValue(%s)", CELL_VAR, CELL_VALUE_STRING_VAR);
                 writer.endControlFlow();
             } else if (fieldTypeKind == TypeKind.SHORT || fieldTypeMirror.equals(shortType)) {
-                writer.emitStatement("Short %s = %s.%s", CELL_VALUE_STRING_VAR, VALUE_VAR,fieldName);
+                writer.emitStatement("Short %s = %s.%s", CELL_VALUE_STRING_VAR, VALUE_VAR, fieldName);
                 writer.beginControlFlow("if(%s != null)", CELL_VALUE_STRING_VAR);
                 writer.emitStatement("%s.setCellValue(%s)", CELL_VAR, CELL_VALUE_STRING_VAR);
                 writer.endControlFlow();
             } else if (fieldTypeKind == TypeKind.INT || fieldTypeMirror.equals(integerType)) {
-                writer.emitStatement("Integer %s = %s.%s", CELL_VALUE_STRING_VAR, VALUE_VAR,fieldName);
+                writer.emitStatement("Integer %s = %s.%s", CELL_VALUE_STRING_VAR, VALUE_VAR, fieldName);
                 writer.beginControlFlow("if(%s != null)", CELL_VALUE_STRING_VAR);
                 writer.emitStatement("%s.setCellValue(%s)", CELL_VAR, CELL_VALUE_STRING_VAR);
                 writer.endControlFlow();
             } else if (fieldTypeKind == TypeKind.LONG || fieldTypeMirror.equals(longType)) {
-                writer.emitStatement("Long %s = %s.%s", CELL_VALUE_STRING_VAR, VALUE_VAR,fieldName);
+                writer.emitStatement("Long %s = %s.%s", CELL_VALUE_STRING_VAR, VALUE_VAR, fieldName);
                 writer.beginControlFlow("if(%s != null)", CELL_VALUE_STRING_VAR);
                 writer.emitStatement("%s.setCellValue(%s)", CELL_VAR, CELL_VALUE_STRING_VAR);
                 writer.endControlFlow();
             } else if (fieldTypeKind == TypeKind.FLOAT || fieldTypeMirror.equals(floatType)) {
-                writer.emitStatement("Float %s = %s.%s", CELL_VALUE_STRING_VAR, VALUE_VAR,fieldName);
+                writer.emitStatement("Float %s = %s.%s", CELL_VALUE_STRING_VAR, VALUE_VAR, fieldName);
                 writer.beginControlFlow("if(%s != null)", CELL_VALUE_STRING_VAR);
                 writer.emitStatement("%s.setCellValue(%s)", CELL_VAR, CELL_VALUE_STRING_VAR);
                 writer.endControlFlow();
             } else if (fieldTypeKind == TypeKind.DOUBLE || fieldTypeMirror.equals(doubleType)) {
-                writer.emitStatement("Float %s = %s.%s", CELL_VALUE_STRING_VAR, VALUE_VAR,fieldName);
+                writer.emitStatement("Float %s = %s.%s", CELL_VALUE_STRING_VAR, VALUE_VAR, fieldName);
                 writer.beginControlFlow("if(%s != null)", CELL_VALUE_STRING_VAR);
                 writer.emitStatement("%s.setCellValue(%s)", CELL_VAR, CELL_VALUE_STRING_VAR);
                 writer.endControlFlow();
             } else if (fieldTypeKind == TypeKind.CHAR || fieldTypeMirror.equals(characterType)) {
-                writer.emitStatement("Character %s = %s.%s", CELL_VALUE_STRING_VAR, VALUE_VAR,fieldName);
+                writer.emitStatement("Character %s = %s.%s", CELL_VALUE_STRING_VAR, VALUE_VAR, fieldName);
                 writer.beginControlFlow("if(%s != null)", CELL_VALUE_STRING_VAR);
                 writer.emitStatement("%s.setCellValue(String.valueOf(%s))", CELL_VAR, CELL_VALUE_STRING_VAR);
                 writer.endControlFlow();
             } else if (fieldTypeKind == TypeKind.BOOLEAN || fieldTypeMirror.equals(booleanType)) {
-                writer.emitStatement("Boolean %s = %s.%s", CELL_VALUE_STRING_VAR, VALUE_VAR,fieldName);
+                writer.emitStatement("Boolean %s = %s.%s", CELL_VALUE_STRING_VAR, VALUE_VAR, fieldName);
                 writer.beginControlFlow("if(%s != null)", CELL_VALUE_STRING_VAR);
                 writer.emitStatement("%s.setCellValue(%s)", CELL_VAR, CELL_VALUE_STRING_VAR);
                 writer.endControlFlow();
             } else if (fieldTypeMirror.equals(stringType)) {
-                writer.emitStatement("String %s = %s.%s", CELL_VALUE_STRING_VAR, VALUE_VAR,fieldName);
+                writer.emitStatement("String %s = %s.%s", CELL_VALUE_STRING_VAR, VALUE_VAR, fieldName);
                 writer.beginControlFlow("if(%s != null)", CELL_VALUE_STRING_VAR);
                 writer.emitStatement("%s.setCellValue(%s)", CELL_VAR, CELL_VALUE_STRING_VAR);
                 writer.endControlFlow();
@@ -556,10 +602,69 @@ public class MapperProcessor extends AbstractProcessor {
         return deserializeIdentifier;
     }
 
-    static class StaticDerSer{
+
+    private void writeSerializerRegistry() {
+        if (serializerRegistry.isEmpty()) {
+            return;
+        }
+        JavaWriter codeWriter = null;
+        try {
+            JavaFileObject source = filer.createSourceFile(QUALIFIED_SERIALIZER_CLASS);
+            codeWriter = new JavaWriter(source.openWriter());
+            codeWriter.emitPackage(PACKAGE);
+            codeWriter.emitEmptyLine();
+            codeWriter.beginType(SERIALIZER_CLASS, INTEFACE_KIND, EnumSet.of(Modifier.PUBLIC));
+            for (Map.Entry<String, StaticDerSer> entry : serializerRegistry.entrySet()) {
+                StaticDerSer derSer = entry.getValue();
+                codeWriter.emitField(derSer.type.toString(), derSer.name, EnumSet.of(Modifier.PUBLIC, Modifier.FINAL), String.format("new %s(\"%s\")", derSer.type.toString(), derSer.param));
+            }
+            codeWriter.endType();
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        } finally {
+            try {
+                if (codeWriter != null) {
+                    codeWriter.close();
+                }
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        }
+    }
+
+    private void writeDeserializerRegistry() {
+        if (deserializerRegistry.isEmpty()) {
+            return;
+        }
+        JavaWriter codeWriter = null;
+        try {
+            JavaFileObject source = filer.createSourceFile(QUALIFIED_DESERIALIZER_CLASS);
+            codeWriter = new JavaWriter(source.openWriter());
+            codeWriter.emitPackage(PACKAGE);
+            codeWriter.emitEmptyLine();
+            codeWriter.beginType(DESERIALIZER_CLASS, INTEFACE_KIND, EnumSet.of(Modifier.PUBLIC));
+            for (Map.Entry<String, StaticDerSer> entry : serializerRegistry.entrySet()) {
+                StaticDerSer derSer = entry.getValue();
+                codeWriter.emitField(derSer.type.toString(), derSer.name, EnumSet.of(Modifier.PUBLIC, Modifier.FINAL), String.format("new %s(\"%s\")", derSer.type.toString(), derSer.param));
+            }
+            codeWriter.endType();
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        } finally {
+            try {
+                if (codeWriter != null) {
+                    codeWriter.close();
+                }
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        }
+    }
+
+
+    static class StaticDerSer {
         String name;
         DeclaredType type;
         String param;
-
     }
 }
