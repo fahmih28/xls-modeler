@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 
-public class DynamicMapper<T> {
+public class Mapper<T> {
 
     protected final Map<String, ColumnMapper<T>> columnMapperRegister;
 
@@ -18,7 +18,7 @@ public class DynamicMapper<T> {
 
     protected Supplier<T> instanceFactory;
 
-    protected DynamicMapper() {
+    protected Mapper() {
         columnMapperRegister = new HashMap<>();
     }
 

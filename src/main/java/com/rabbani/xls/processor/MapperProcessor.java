@@ -6,7 +6,7 @@ import com.rabbani.xls.annotation.Serialize;
 import com.rabbani.xls.annotation.Xls;
 import com.rabbani.xls.engine.Deserializer;
 import com.rabbani.xls.engine.Serializer;
-import com.rabbani.xls.engine.DynamicMapper;
+import com.rabbani.xls.engine.Mapper;
 import com.rabbani.xls.engine.MapperFactory;
 import com.rabbani.xls.util.IdentifierUtils;
 import com.rabbani.xls.util.StringUtils;
@@ -34,7 +34,7 @@ import static java.util.Arrays.asList;
 public class MapperProcessor extends AbstractProcessor {
 
     private interface MapperFactoryConstants {
-        String GET_METHOD = "getDynamic";
+        String GET_METHOD = "get";
     }
 
     private interface MapperConstants {
@@ -150,14 +150,14 @@ public class MapperProcessor extends AbstractProcessor {
         mapElement = elements.getTypeElement(Map.class.getName());
         classElement = elements.getTypeElement(Class.class.getName());
         hashMapElement = elements.getTypeElement(HashMap.class.getName());
-        mapperElement = elements.getTypeElement(DynamicMapper.class.getName());
-        dynamicMapperElement = elements.getTypeElement(DynamicMapper.class.getName());
+        mapperElement = elements.getTypeElement(Mapper.class.getName());
+        dynamicMapperElement = elements.getTypeElement(Mapper.class.getName());
         serializeElement = elements.getTypeElement(Serialize.class.getName());
         deserializeElement = elements.getTypeElement(Deserialize.class.getName());
         stringUtilsTypeMirror = elements.getTypeElement(StringUtils.class.getName()).asType();
         uncheckedConsumerElement = elements.getTypeElement(UncheckedConsumer.class.getName());
         wildcardTypeMirror = types.getWildcardType(null, null);
-        columnMapperElement = elements.getTypeElement(DynamicMapper.ColumnMapper.class.getCanonicalName());
+        columnMapperElement = elements.getTypeElement(Mapper.ColumnMapper.class.getCanonicalName());
         cellTypeMirror = elements.getTypeElement(Cell.class.getName()).asType();
         byteType = elements.getTypeElement(Byte.class.getName()).asType();
         shortType = elements.getTypeElement(Short.class.getName()).asType();
@@ -375,6 +375,10 @@ public class MapperProcessor extends AbstractProcessor {
                 .anyMatch(executableElement -> {
                     if(executableElement.getModifiers().contains(Modifier.PUBLIC)) {
                             List<? extends VariableElement> constParams = executableElement.getParameters();
+                            if(requiredParamTypes.size() != constParams.size()) {
+                                return false;
+                            }
+
                             for(int i = 0;i < constParams.size();i++) {
                                 TypeMirror paramType = constParams.get(i).asType();
                                 if(!types.isAssignable(requiredParamTypes.get(i),paramType)){

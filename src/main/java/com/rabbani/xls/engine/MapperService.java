@@ -19,7 +19,7 @@ public class MapperService {
         mapperFactory = ServiceLoader.load(MapperFactory.class).iterator().next();
     }
 
-    public <T> DynamicMapper<T> getDynamicMapper(Class<T> type) {
-        return mapperFactory.getDynamic(type);
+    public <T> Mapper<T> getMapper(Class<T> type) {
+        return mapperFactory.get(type);
     }
 }
