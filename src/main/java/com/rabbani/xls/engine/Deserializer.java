@@ -1,6 +1,8 @@
 package com.rabbani.xls.engine;
 
+import javafx.scene.control.Cell;
+
 public interface Deserializer<T> {
 
-    T convert(String data);
+    T convert(Cell cell);
 }

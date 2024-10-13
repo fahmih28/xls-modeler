@@ -567,75 +567,78 @@ public class MapperProcessor extends AbstractProcessor {
 
             String readerIdentifier = identifierUtils.createName(fieldApplierType + "Reader");
             writer.beginControlFlow("%s %s = (%s,%s)->", fieldApplierType, readerIdentifier, CELL_VAR, VALUE_VAR);
-            writer.emitStatement("String %s = %s.getStringCellValue()", CELL_VALUE_STRING_VAR, CELL_VAR);
+
             if (deserializerIdentifier != null) {
-                writer.emitStatement("%s.%s = %s.%s.%s(%s)", VALUE_VAR, name, QUALIFIED_DESERIALIZER_CLASS, deserializerIdentifier, DER_SER_METHOD, CELL_VALUE_STRING_VAR);
-            } else if (fieldTypeKind == TypeKind.BYTE || type.equals(byteType)) {
-                writer.beginControlFlow("if(!%s.isEmpty(%s))", stringUtilsTypeMirror.toString(), CELL_VALUE_STRING_VAR);
-                writer.emitStatement("%s.%s = Byte.parseByte(%s)", VALUE_VAR, name, CELL_VALUE_STRING_VAR);
-                writer.endControlFlow();
-                writer.beginControlFlow("else");
-                String setValue = fieldTypeKind.isPrimitive() ? "0" : "null";
-                writer.emitStatement("%s.%s = %s", VALUE_VAR, name, setValue);
-                writer.endControlFlow();
-            } else if (fieldTypeKind == TypeKind.SHORT || type.equals(shortType)) {
-                writer.beginControlFlow("if(!%s.isEmpty(%s))", stringUtilsTypeMirror.toString(), CELL_VALUE_STRING_VAR);
-                writer.emitStatement("%s.%s = Short.parseShort(%s)", VALUE_VAR, name, CELL_VALUE_STRING_VAR);
-                writer.endControlFlow();
-                writer.beginControlFlow("else");
-                String setValue = fieldTypeKind.isPrimitive() ? "0" : "null";
-                writer.emitStatement("%s.%s = %s", VALUE_VAR, name, setValue);
-                writer.endControlFlow();
-            } else if (fieldTypeKind == TypeKind.INT || type.equals(integerType)) {
-                writer.beginControlFlow("if(!%s.isEmpty(%s))", stringUtilsTypeMirror.toString(), CELL_VALUE_STRING_VAR);
-                writer.emitStatement("%s.%s = Integer.parseInt(%s)", VALUE_VAR, name, CELL_VALUE_STRING_VAR);
-                writer.endControlFlow();
-                writer.beginControlFlow("else");
-                String setValue = fieldTypeKind.isPrimitive() ? "0" : "null";
-                writer.emitStatement("%s.%s = %s", VALUE_VAR, name, setValue);
-                writer.endControlFlow();
-            } else if (fieldTypeKind == TypeKind.LONG || type.equals(longType)) {
-                writer.beginControlFlow("if(!%s.isEmpty(%s))", stringUtilsTypeMirror.toString(), CELL_VALUE_STRING_VAR);
-                writer.emitStatement("%s.%s = Long.parseLong(%s)", VALUE_VAR, name, CELL_VALUE_STRING_VAR);
-                writer.endControlFlow();
-                writer.beginControlFlow("else");
-                String setValue = fieldTypeKind.isPrimitive() ? "0L" : "null";
-                writer.emitStatement("%s.%s = %s", VALUE_VAR, name, setValue);
-                writer.endControlFlow();
-            } else if (fieldTypeKind == TypeKind.FLOAT || type.equals(floatType)) {
-                writer.beginControlFlow("if(!%s.isEmpty(%s))", stringUtilsTypeMirror.toString(), CELL_VALUE_STRING_VAR);
-                writer.emitStatement("%s.%s = Float.parseFloat(%s)", VALUE_VAR, name, CELL_VALUE_STRING_VAR);
-                writer.endControlFlow();
-                writer.beginControlFlow("else");
-                String setValue = fieldTypeKind.isPrimitive() ? "0F" : "null";
-                writer.emitStatement("%s.%s = %s", VALUE_VAR, name, setValue);
-                writer.endControlFlow();
-            } else if (fieldTypeKind == TypeKind.DOUBLE || type.equals(doubleType)) {
-                writer.beginControlFlow("if(!%s.isEmpty(%s))", stringUtilsTypeMirror.toString(), CELL_VALUE_STRING_VAR);
-                writer.emitStatement("%s.%s = Double.parseDouble(%s)", VALUE_VAR, name, CELL_VALUE_STRING_VAR);
-                writer.endControlFlow();
-                writer.beginControlFlow("else");
-                String setValue = fieldTypeKind.isPrimitive() ? "0D" : "null";
-                writer.emitStatement("%s.%s = %s", VALUE_VAR, name, setValue);
-                writer.endControlFlow();
-            } else if (fieldTypeKind == TypeKind.CHAR || type.equals(characterType)) {
-                writer.beginControlFlow("if(!%s.isEmpty(%s))", stringUtilsTypeMirror.toString(), CELL_VALUE_STRING_VAR);
-                writer.emitStatement("%s.%s = %s.charAt(0)", VALUE_VAR, name, CELL_VALUE_STRING_VAR);
-                writer.endControlFlow();
-                writer.beginControlFlow("else");
-                String setValue = fieldTypeKind.isPrimitive() ? "\u0000" : "null";
-                writer.emitStatement("%s.%s = %s", VALUE_VAR, name, setValue);
-                writer.endControlFlow();
-            } else if (fieldTypeKind == TypeKind.BOOLEAN || type.equals(booleanType)) {
-                writer.beginControlFlow("if(!%s.isEmpty(%s))", stringUtilsTypeMirror.toString(), CELL_VALUE_STRING_VAR);
-                writer.emitStatement("%s.%s = Boolean.parseBoolean(%s)", VALUE_VAR, name, CELL_VALUE_STRING_VAR);
-                writer.endControlFlow();
-                writer.beginControlFlow("else");
-                String setValue = fieldTypeKind.isPrimitive() ? "false" : "null";
-                writer.emitStatement("%s.%s = %s", VALUE_VAR, name, setValue);
-                writer.endControlFlow();
-            } else if (type.equals(stringType)) {
-                writer.emitStatement("%s.%s = !%s.isEmpty(%s)?%s:%s", VALUE_VAR, name, stringUtilsTypeMirror.toString(), CELL_VALUE_STRING_VAR, CELL_VALUE_STRING_VAR, "null");
+                writer.emitStatement("%s.%s = %s.%s.%s(%s)", VALUE_VAR, name, QUALIFIED_DESERIALIZER_CLASS, deserializerIdentifier, DER_SER_METHOD, CELL_VAR);
+            }else {
+                writer.emitStatement("String %s = %s.getStringCellValue()", CELL_VALUE_STRING_VAR, CELL_VAR);
+                if (fieldTypeKind == TypeKind.BYTE || type.equals(byteType)) {
+                    writer.beginControlFlow("if(!%s.isEmpty(%s))", stringUtilsTypeMirror.toString(), CELL_VALUE_STRING_VAR);
+                    writer.emitStatement("%s.%s = Byte.parseByte(%s)", VALUE_VAR, name, CELL_VALUE_STRING_VAR);
+                    writer.endControlFlow();
+                    writer.beginControlFlow("else");
+                    String setValue = fieldTypeKind.isPrimitive() ? "0" : "null";
+                    writer.emitStatement("%s.%s = %s", VALUE_VAR, name, setValue);
+                    writer.endControlFlow();
+                } else if (fieldTypeKind == TypeKind.SHORT || type.equals(shortType)) {
+                    writer.beginControlFlow("if(!%s.isEmpty(%s))", stringUtilsTypeMirror.toString(), CELL_VALUE_STRING_VAR);
+                    writer.emitStatement("%s.%s = Short.parseShort(%s)", VALUE_VAR, name, CELL_VALUE_STRING_VAR);
+                    writer.endControlFlow();
+                    writer.beginControlFlow("else");
+                    String setValue = fieldTypeKind.isPrimitive() ? "0" : "null";
+                    writer.emitStatement("%s.%s = %s", VALUE_VAR, name, setValue);
+                    writer.endControlFlow();
+                } else if (fieldTypeKind == TypeKind.INT || type.equals(integerType)) {
+                    writer.beginControlFlow("if(!%s.isEmpty(%s))", stringUtilsTypeMirror.toString(), CELL_VALUE_STRING_VAR);
+                    writer.emitStatement("%s.%s = Integer.parseInt(%s)", VALUE_VAR, name, CELL_VALUE_STRING_VAR);
+                    writer.endControlFlow();
+                    writer.beginControlFlow("else");
+                    String setValue = fieldTypeKind.isPrimitive() ? "0" : "null";
+                    writer.emitStatement("%s.%s = %s", VALUE_VAR, name, setValue);
+                    writer.endControlFlow();
+                } else if (fieldTypeKind == TypeKind.LONG || type.equals(longType)) {
+                    writer.beginControlFlow("if(!%s.isEmpty(%s))", stringUtilsTypeMirror.toString(), CELL_VALUE_STRING_VAR);
+                    writer.emitStatement("%s.%s = Long.parseLong(%s)", VALUE_VAR, name, CELL_VALUE_STRING_VAR);
+                    writer.endControlFlow();
+                    writer.beginControlFlow("else");
+                    String setValue = fieldTypeKind.isPrimitive() ? "0L" : "null";
+                    writer.emitStatement("%s.%s = %s", VALUE_VAR, name, setValue);
+                    writer.endControlFlow();
+                } else if (fieldTypeKind == TypeKind.FLOAT || type.equals(floatType)) {
+                    writer.beginControlFlow("if(!%s.isEmpty(%s))", stringUtilsTypeMirror.toString(), CELL_VALUE_STRING_VAR);
+                    writer.emitStatement("%s.%s = Float.parseFloat(%s)", VALUE_VAR, name, CELL_VALUE_STRING_VAR);
+                    writer.endControlFlow();
+                    writer.beginControlFlow("else");
+                    String setValue = fieldTypeKind.isPrimitive() ? "0F" : "null";
+                    writer.emitStatement("%s.%s = %s", VALUE_VAR, name, setValue);
+                    writer.endControlFlow();
+                } else if (fieldTypeKind == TypeKind.DOUBLE || type.equals(doubleType)) {
+                    writer.beginControlFlow("if(!%s.isEmpty(%s))", stringUtilsTypeMirror.toString(), CELL_VALUE_STRING_VAR);
+                    writer.emitStatement("%s.%s = Double.parseDouble(%s)", VALUE_VAR, name, CELL_VALUE_STRING_VAR);
+                    writer.endControlFlow();
+                    writer.beginControlFlow("else");
+                    String setValue = fieldTypeKind.isPrimitive() ? "0D" : "null";
+                    writer.emitStatement("%s.%s = %s", VALUE_VAR, name, setValue);
+                    writer.endControlFlow();
+                } else if (fieldTypeKind == TypeKind.CHAR || type.equals(characterType)) {
+                    writer.beginControlFlow("if(!%s.isEmpty(%s))", stringUtilsTypeMirror.toString(), CELL_VALUE_STRING_VAR);
+                    writer.emitStatement("%s.%s = %s.charAt(0)", VALUE_VAR, name, CELL_VALUE_STRING_VAR);
+                    writer.endControlFlow();
+                    writer.beginControlFlow("else");
+                    String setValue = fieldTypeKind.isPrimitive() ? "\u0000" : "null";
+                    writer.emitStatement("%s.%s = %s", VALUE_VAR, name, setValue);
+                    writer.endControlFlow();
+                } else if (fieldTypeKind == TypeKind.BOOLEAN || type.equals(booleanType)) {
+                    writer.beginControlFlow("if(!%s.isEmpty(%s))", stringUtilsTypeMirror.toString(), CELL_VALUE_STRING_VAR);
+                    writer.emitStatement("%s.%s = Boolean.parseBoolean(%s)", VALUE_VAR, name, CELL_VALUE_STRING_VAR);
+                    writer.endControlFlow();
+                    writer.beginControlFlow("else");
+                    String setValue = fieldTypeKind.isPrimitive() ? "false" : "null";
+                    writer.emitStatement("%s.%s = %s", VALUE_VAR, name, setValue);
+                    writer.endControlFlow();
+                } else if (type.equals(stringType)) {
+                    writer.emitStatement("%s.%s = !%s.isEmpty(%s)?%s:%s", VALUE_VAR, name, stringUtilsTypeMirror.toString(), CELL_VALUE_STRING_VAR, CELL_VALUE_STRING_VAR, "null");
+                }
             }
 
             writer.endControlFlow("");
@@ -669,7 +672,6 @@ public class MapperProcessor extends AbstractProcessor {
         for (String column : columns) {
             MapperScheme.ColumnScheme columnScheme = mapperScheme.properties.get(mapperScheme.caseSensitive ? column : column.toLowerCase());
             if (columnScheme != null) {
-                String label = column;
                 String serializerIdentifier = columnScheme.serializerIdentifier;
                 boolean isPrimitiveType = columnScheme.type.getKind().isPrimitive();
                 String name = columnScheme.name;
@@ -695,7 +697,7 @@ public class MapperProcessor extends AbstractProcessor {
                 writer.endControlFlow();
                 writer.beginControlFlow("catch(%s %s)", throwableType, throwIdenfier);
                 writer.beginControlFlow("if(%s != null)", errorHandlerIdentifier);
-                writer.emitStatement("%s.handle(\"%s\",%s,%s)", errorHandlerIdentifier, label, cellIdentifier, throwIdenfier);
+                writer.emitStatement("%s.handle(\"%s\",%s,%s)", errorHandlerIdentifier, column, cellIdentifier, throwIdenfier);
                 writer.endControlFlow();
                 writer.endControlFlow();
                 writer.emitEmptyLine();
@@ -712,10 +714,8 @@ public class MapperProcessor extends AbstractProcessor {
         String instanceIdentifier = identifierUtils.createName(mapperScheme.type.toString());
         writer.emitStatement("%s %s = new %1$s()", mapperScheme.type, instanceIdentifier);
         for (String column : columns) {
-
             MapperScheme.ColumnScheme columnScheme = mapperScheme.properties.get(mapperScheme.caseSensitive ? column : column.toLowerCase());
             if (columnScheme != null) {
-                String label = column;
                 String deserializerIdentifier = columnScheme.deserializerIdentifier;
                 TypeMirror type = columnScheme.type;
                 TypeKind typeKind = type.getKind();
@@ -724,18 +724,18 @@ public class MapperProcessor extends AbstractProcessor {
                 String throwIdenfier = identifierUtils.createName(throwableType.toString());
                 writer.emitStatement("%s %s = %s.getCell(%d)", cellTypeMirror, cellIdentifier, rowIdentifier, i);
                 writer.beginControlFlow("try");
-                String cellRawValueIdentifier = identifierUtils.createName(stringType.toString());
-                writer.emitStatement("%s %s = %s.getStringCellValue()", stringType, cellRawValueIdentifier, cellIdentifier);
+
                 if (deserializerIdentifier != null) {
-                    writer.emitStatement("%s.%s = %s.%s.%s(%s)", instanceIdentifier, name, QUALIFIED_SERIALIZER_CLASS, deserializerIdentifier, DER_SER_METHOD, cellRawValueIdentifier);
+                    writer.emitStatement("%s.%s = %s.%s.%s(%s)", instanceIdentifier, name, QUALIFIED_SERIALIZER_CLASS, deserializerIdentifier, DER_SER_METHOD, cellIdentifier);
                     writer.endControlFlow();
                 } else {
+                    String cellRawValueIdentifier = identifierUtils.createName(stringType.toString());
+                    writer.emitStatement("%s %s = %s.getStringCellValue()", stringType, cellRawValueIdentifier, cellIdentifier);
                     writer.beginControlFlow("if(!%s.isEmpty(%s))", stringUtilsTypeMirror, cellRawValueIdentifier);
                     String fallbackValue = null;
                     if (typeKind == TypeKind.BYTE || type.equals(byteType)) {
                         writer.emitStatement("%s.%s = Byte.parseByte(%s)", instanceIdentifier, name, cellRawValueIdentifier);
                         fallbackValue = typeKind.isPrimitive() ? "0" : "null";
-
                     } else if (typeKind == TypeKind.SHORT || type.equals(shortType)) {
                         writer.emitStatement("%s.%s = Short.parseShort(%s)", instanceIdentifier, name, cellRawValueIdentifier);
                         fallbackValue = typeKind.isPrimitive() ? "0" : "null";
@@ -748,7 +748,6 @@ public class MapperProcessor extends AbstractProcessor {
                     } else if (typeKind == TypeKind.FLOAT || type.equals(floatType)) {
                         writer.emitStatement("%s.%s = Float.parseFloat(%s)", instanceIdentifier, name, cellRawValueIdentifier);
                         fallbackValue = typeKind.isPrimitive() ? "0F" : "null";
-
                     } else if (typeKind == TypeKind.DOUBLE || type.equals(doubleType)) {
                         writer.emitStatement("%s.%s = Double.parseDouble(%s)", instanceIdentifier, name, cellRawValueIdentifier);
                         fallbackValue = typeKind.isPrimitive() ? "0D" : "null";
@@ -769,7 +768,7 @@ public class MapperProcessor extends AbstractProcessor {
                 writer.endControlFlow();
                 writer.beginControlFlow("catch(%s %s)", throwableType, throwIdenfier);
                 writer.beginControlFlow("if(%s != null)", errorHandlerIdentifier);
-                writer.emitStatement("%s.handle(\"%s\",%s,%s)", errorHandlerIdentifier, label, cellIdentifier, throwIdenfier);
+                writer.emitStatement("%s.handle(\"%s\",%s,%s)", errorHandlerIdentifier, column, cellIdentifier, throwIdenfier);
                 writer.endControlFlow();
                 writer.endControlFlow();
 
