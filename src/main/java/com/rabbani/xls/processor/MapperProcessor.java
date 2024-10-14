@@ -51,11 +51,13 @@ public class MapperProcessor extends AbstractProcessor {
 
     private static final String PACKAGE = "com.rabbani.xls.engine.impl";
 
-    private static final String DER_SER_METHOD = "convert";
+    private static final String SERIALIZE_METHOD = "serialize";
+
+    private static final String DESERIALIZE_METHOD = "deserialize";
 
     private static final String SERIALIZER_CLASS = "__Serializer";
 
-    private static final String DESERIALIZER_CLASS = "__Serializer";
+    private static final String DESERIALIZER_CLASS = "__Deserializer";
 
     private static final String QUALIFIED_SERIALIZER_CLASS = PACKAGE + "." + SERIALIZER_CLASS;
 
@@ -205,7 +207,7 @@ public class MapperProcessor extends AbstractProcessor {
 
             ExecutableElement element = (ExecutableElement) serializerElementMember;
             String name = element.getSimpleName().toString();
-            if (DER_SER_METHOD.equals(name)) {
+            if (SERIALIZE_METHOD.equals(name)) {
                 serializerMethodElement = element;
             }
         }
@@ -218,7 +220,7 @@ public class MapperProcessor extends AbstractProcessor {
 
             ExecutableElement element = (ExecutableElement) deserializerElementMember;
             String name = element.getSimpleName().toString();
-            if (DER_SER_METHOD.equals(name)) {
+            if (DESERIALIZE_METHOD.equals(name)) {
                 deserializerMethodElement = element;
             }
         }
@@ -468,7 +470,7 @@ public class MapperProcessor extends AbstractProcessor {
 
         validateAccessibleConstructor((TypeElement) staticDerSer.type.asElement(), asList(stringType));
 
-        TypeMirror deserializeParamType = ((ExecutableType) types.asMemberOf(staticDerSer.type, deserializerMethodElement)).getParameterTypes().get(0);
+        TypeMirror deserializeParamType = ((ExecutableType) types.asMemberOf(staticDerSer.type, deserializerMethodElement)).getReturnType();
         if (!types.isAssignable(deserializeParamType, fieldTypeMirror)) {
             raiseError(variableElement, "has deserialize of type " + staticDerSer.type.toString() + " type <" + deserializeParamType.toString() + "> cannot be assigned to <" + fieldTypeMirror.toString() + ">");
         }
@@ -511,10 +513,7 @@ public class MapperProcessor extends AbstractProcessor {
             String writerIdentifier = identifierUtils.createName(fieldApplierType + "Writer");
             writer.beginControlFlow("%s %s = (%s,%s)->", fieldApplierType, writerIdentifier, CELL_VAR, VALUE_VAR);
             if (serializerIdentifier != null) {
-                writer.emitStatement("String %s = %s.%s.%s(%s.%s)", CELL_VALUE_STRING_VAR, QUALIFIED_SERIALIZER_CLASS, serializerIdentifier, DER_SER_METHOD, VALUE_VAR, name);
-                writer.beginControlFlow("if(%s != null)", CELL_VALUE_STRING_VAR);
-                writer.emitStatement("%s.setCellValue(%s)", CELL_VAR, CELL_VALUE_STRING_VAR);
-                writer.endControlFlow();
+                writer.emitStatement("%s.%s.%s(%s.%s,%s)", QUALIFIED_SERIALIZER_CLASS, serializerIdentifier, SERIALIZE_METHOD, VALUE_VAR, name,CELL_VAR);
             } else {
                 if (fieldTypeKind == TypeKind.BYTE || type.equals(byteType)) {
                     writer.emitStatement("Byte %s = %s.%s", CELL_VALUE_STRING_VAR, VALUE_VAR, name);
@@ -569,7 +568,7 @@ public class MapperProcessor extends AbstractProcessor {
             writer.beginControlFlow("%s %s = (%s,%s)->", fieldApplierType, readerIdentifier, CELL_VAR, VALUE_VAR);
 
             if (deserializerIdentifier != null) {
-                writer.emitStatement("%s.%s = %s.%s.%s(%s)", VALUE_VAR, name, QUALIFIED_DESERIALIZER_CLASS, deserializerIdentifier, DER_SER_METHOD, CELL_VAR);
+                writer.emitStatement("%s.%s = %s.%s.%s(%s)", VALUE_VAR, name, QUALIFIED_DESERIALIZER_CLASS, deserializerIdentifier, DESERIALIZE_METHOD, CELL_VAR);
             }else {
                 writer.emitStatement("String %s = %s.getStringCellValue()", CELL_VALUE_STRING_VAR, CELL_VAR);
                 if (fieldTypeKind == TypeKind.BYTE || type.equals(byteType)) {
@@ -680,10 +679,8 @@ public class MapperProcessor extends AbstractProcessor {
                 writer.emitStatement("%s %s = null", cellTypeMirror, cellIdentifier);
                 writer.beginControlFlow("try");
                 if (columnScheme.serializerIdentifier != null) {
-                    String serializeResultIdentifier = identifierUtils.createName(stringType.toString());
                     writer.emitStatement("%s = %s.createCell(%d)", cellIdentifier, rowIdentifier, i);
-                    writer.emitStatement("%s %s = %s.%s.%s(%s.%s)", stringType, serializeResultIdentifier, QUALIFIED_SERIALIZER_CLASS, serializerIdentifier, DER_SER_METHOD, targetIdentifier, name);
-                    writer.emitStatement("%s.setCellValue(%s)", cellIdentifier, serializeResultIdentifier);
+                    writer.emitStatement("%s.%s.%s(%s.%s,%s)",  QUALIFIED_SERIALIZER_CLASS, serializerIdentifier, SERIALIZE_METHOD, targetIdentifier, name,cellIdentifier);
                 } else {
                     if (!isPrimitiveType) {
                         writer.beginControlFlow("if(%s.%s != null)", targetIdentifier, name);
@@ -726,8 +723,7 @@ public class MapperProcessor extends AbstractProcessor {
                 writer.beginControlFlow("try");
 
                 if (deserializerIdentifier != null) {
-                    writer.emitStatement("%s.%s = %s.%s.%s(%s)", instanceIdentifier, name, QUALIFIED_SERIALIZER_CLASS, deserializerIdentifier, DER_SER_METHOD, cellIdentifier);
-                    writer.endControlFlow();
+                    writer.emitStatement("%s.%s = %s.%s.%s(%s)", instanceIdentifier, name, QUALIFIED_DESERIALIZER_CLASS, deserializerIdentifier, DESERIALIZE_METHOD, cellIdentifier);
                 } else {
                     String cellRawValueIdentifier = identifierUtils.createName(stringType.toString());
                     writer.emitStatement("%s %s = %s.getStringCellValue()", stringType, cellRawValueIdentifier, cellIdentifier);
@@ -825,7 +821,7 @@ public class MapperProcessor extends AbstractProcessor {
             codeWriter.emitPackage(PACKAGE);
             codeWriter.emitEmptyLine();
             codeWriter.beginType(DESERIALIZER_CLASS, INTEFACE_KIND, EnumSet.of(Modifier.PUBLIC));
-            for (Map.Entry<String, StaticDerSer> entry : serializerRegistry.entrySet()) {
+            for (Map.Entry<String, StaticDerSer> entry : deserializerRegistry.entrySet()) {
                 StaticDerSer derSer = entry.getValue();
                 codeWriter.emitField(derSer.type.toString(), derSer.name, EnumSet.of(Modifier.PUBLIC, Modifier.FINAL), String.format("new %s(\"%s\")", derSer.type.toString(), derSer.param));
             }

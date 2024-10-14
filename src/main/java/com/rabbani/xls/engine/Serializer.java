@@ -1,7 +1,9 @@
 package com.rabbani.xls.engine;
 
+import org.apache.poi.ss.usermodel.Cell;
+
 public interface Serializer<T> {
 
-    String convert(T data);
+    void serialize(T data, Cell cell);
     
 }

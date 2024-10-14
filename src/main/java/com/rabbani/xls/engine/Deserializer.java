@@ -1,8 +1,8 @@
 package com.rabbani.xls.engine;
 
-import javafx.scene.control.Cell;
+import org.apache.poi.ss.usermodel.Cell;
 
 public interface Deserializer<T> {
 
-    T convert(Cell cell);
+    T deserialize(Cell cell);
 }
