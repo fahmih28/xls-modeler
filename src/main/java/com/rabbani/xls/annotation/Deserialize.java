@@ -1,7 +1,6 @@
 package com.rabbani.xls.annotation;
 
 import com.rabbani.xls.engine.Deserializer;
-import com.rabbani.xls.engine.Serializer;
 
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;

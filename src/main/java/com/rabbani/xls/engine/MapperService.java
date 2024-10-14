@@ -8,8 +8,8 @@ public class MapperService {
 
     private static MapperService INSTANCE;
 
-    public static MapperService getInstance(){
-        if(INSTANCE == null){
+    public static MapperService getInstance() {
+        if (INSTANCE == null) {
             INSTANCE = new MapperService();
         }
         return INSTANCE;

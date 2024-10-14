@@ -513,7 +513,7 @@ public class MapperProcessor extends AbstractProcessor {
             String writerIdentifier = identifierUtils.createName(fieldApplierType + "Writer");
             writer.beginControlFlow("%s %s = (%s,%s)->", fieldApplierType, writerIdentifier, CELL_VAR, VALUE_VAR);
             if (serializerIdentifier != null) {
-                writer.emitStatement("%s.%s.%s(%s.%s,%s)", QUALIFIED_SERIALIZER_CLASS, serializerIdentifier, SERIALIZE_METHOD, VALUE_VAR, name,CELL_VAR);
+                writer.emitStatement("%s.%s.%s(%s.%s,%s)", QUALIFIED_SERIALIZER_CLASS, serializerIdentifier, SERIALIZE_METHOD, VALUE_VAR, name, CELL_VAR);
             } else {
                 if (fieldTypeKind == TypeKind.BYTE || type.equals(byteType)) {
                     writer.emitStatement("Byte %s = %s.%s", CELL_VALUE_STRING_VAR, VALUE_VAR, name);
@@ -569,7 +569,7 @@ public class MapperProcessor extends AbstractProcessor {
 
             if (deserializerIdentifier != null) {
                 writer.emitStatement("%s.%s = %s.%s.%s(%s)", VALUE_VAR, name, QUALIFIED_DESERIALIZER_CLASS, deserializerIdentifier, DESERIALIZE_METHOD, CELL_VAR);
-            }else {
+            } else {
                 writer.emitStatement("String %s = %s.getStringCellValue()", CELL_VALUE_STRING_VAR, CELL_VAR);
                 if (fieldTypeKind == TypeKind.BYTE || type.equals(byteType)) {
                     writer.beginControlFlow("if(!%s.isEmpty(%s))", stringUtilsTypeMirror.toString(), CELL_VALUE_STRING_VAR);
@@ -680,7 +680,7 @@ public class MapperProcessor extends AbstractProcessor {
                 writer.beginControlFlow("try");
                 if (columnScheme.serializerIdentifier != null) {
                     writer.emitStatement("%s = %s.createCell(%d)", cellIdentifier, rowIdentifier, i);
-                    writer.emitStatement("%s.%s.%s(%s.%s,%s)",  QUALIFIED_SERIALIZER_CLASS, serializerIdentifier, SERIALIZE_METHOD, targetIdentifier, name,cellIdentifier);
+                    writer.emitStatement("%s.%s.%s(%s.%s,%s)", QUALIFIED_SERIALIZER_CLASS, serializerIdentifier, SERIALIZE_METHOD, targetIdentifier, name, cellIdentifier);
                 } else {
                     if (!isPrimitiveType) {
                         writer.beginControlFlow("if(%s.%s != null)", targetIdentifier, name);
