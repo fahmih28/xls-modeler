@@ -97,6 +97,7 @@ public class MapperProcessor extends AbstractProcessor {
 
     private TypeMirror stringUtilsTypeMirror;
 
+    private TypeElement objectElement;
 
     private TypeMirror wildcardTypeMirror;
 
@@ -158,6 +159,7 @@ public class MapperProcessor extends AbstractProcessor {
         elements = processingEnv.getElementUtils();
         mapElement = elements.getTypeElement(Map.class.getName());
         classElement = elements.getTypeElement(Class.class.getName());
+        objectElement = elements.getTypeElement(Object.class.getName());
         hashMapElement = elements.getTypeElement(HashMap.class.getName());
         instanceElement = elements.getTypeElement(Mapper.Instance.class.getCanonicalName());
         mapperElement = elements.getTypeElement(Mapper.class.getName());
@@ -273,61 +275,74 @@ public class MapperProcessor extends AbstractProcessor {
         }
     }
 
+    private void extractAccessibleFields(Map<String,VariableElement> repository,MapperScheme mapperScheme){
+        for (VariableElement field : repository.values()) {
+
+            Col col = field.getAnnotation(Col.class);
+            String fieldName = field.getSimpleName().toString();
+            String label = (col != null) ? col.value() : fieldName;
+            TypeMirror fieldType = field.asType();
+
+            String serializerIdentifier = processSerializer(field);
+            String deserializerIdentifier = processDeserializer(field);
+            boolean isAccepted = acceptedType(fieldType);
+            if (!isAccepted && serializerIdentifier == null) {
+                raiseError(field, "Unsupported field type, please provide serializer for this field");
+            }
+
+            if (!isAccepted && deserializerIdentifier == null) {
+                raiseError(field, "Unsupported field type, please provide deserializer for this field");
+            }
+
+            MapperScheme.ColumnScheme columnScheme = new MapperScheme.ColumnScheme();
+            columnScheme.label = label;
+            columnScheme.type = fieldType;
+            columnScheme.name = fieldName;
+            columnScheme.canonicalPath = mapperScheme.type + "." + fieldName;
+            columnScheme.serializerIdentifier = serializerIdentifier;
+            columnScheme.deserializerIdentifier = deserializerIdentifier;
+            mapperScheme.properties.put(mapperScheme.caseSensitive ? label : label.toLowerCase(), columnScheme);
+        }
+    }
+
+    private boolean isQualifiedDerSer(Element element) {
+        boolean skip = element.getModifiers().stream().anyMatch(modifier -> modifier == Modifier.TRANSIENT
+                || modifier == Modifier.PRIVATE
+                || modifier == Modifier.STATIC
+                || modifier == Modifier.FINAL) || element.getAnnotation(Transient.class) != null;
+        return !skip;
+    }
+
     private void writeMapperDomain(TypeElement target) {
         try {
-
             DeclaredType targetTypeMirror = (DeclaredType) target.asType();
+            Stack<TypeElement> scannedTypes = new Stack<>();
             Xls xls = target.getAnnotation(Xls.class);
-            boolean isCaseSensitive = xls.caseSensitive();
 
             MapperScheme mapperScheme = new MapperScheme();
-            mapperScheme.caseSensitive = isCaseSensitive;
+            mapperScheme.caseSensitive = xls.caseSensitive();
             mapperScheme.properties = new HashMap<>();
             mapperScheme.type = targetTypeMirror;
             mapperScheme.values = xls.columns();
 
-
-            for (Element element : target.getEnclosedElements()) {
-                if (!(element instanceof VariableElement)) {
-                    continue;
-                }
-                VariableElement field = (VariableElement) element;
-
-                boolean shouldSkip = element.getModifiers().stream().anyMatch(modifier -> modifier == Modifier.TRANSIENT
-                        || modifier == Modifier.PRIVATE
-                        || modifier == Modifier.STATIC
-                        || modifier == Modifier.FINAL) || field.getAnnotation(Transient.class) != null;
-
-                if (shouldSkip) {
-                    continue;
-                }
-
-
-                Col col = field.getAnnotation(Col.class);
-                String fieldName = field.getSimpleName().toString();
-                String label = (col != null) ? col.value() : fieldName;
-                TypeMirror fieldType = field.asType();
-
-                String serializerIdentifier = processSerializer(field);
-                String deserializerIdentifier = processDeserializer(field);
-                boolean isAccepted = acceptedType(fieldType);
-                if (!isAccepted && serializerIdentifier == null) {
-                    raiseError(field, "Unsupported field type, please provide serializer for this field");
-                }
-
-                if (!isAccepted && deserializerIdentifier == null) {
-                    raiseError(field, "Unsupported field type, please provide deserializer for this field");
-                }
-
-                MapperScheme.ColumnScheme columnScheme = new MapperScheme.ColumnScheme();
-                columnScheme.label = label;
-                columnScheme.type = fieldType;
-                columnScheme.name = fieldName;
-                columnScheme.canonicalPath = targetTypeMirror + "." + fieldName;
-                columnScheme.serializerIdentifier = serializerIdentifier;
-                columnScheme.deserializerIdentifier = deserializerIdentifier;
-                mapperScheme.properties.put(isCaseSensitive ? label : label.toLowerCase(), columnScheme);
+            TypeElement scanned = target;
+            scannedTypes.push(scanned);
+            while(!objectElement.asType().equals(scanned.getSuperclass())){
+                scanned = (TypeElement) types.asElement(scanned.getSuperclass());
+                scannedTypes.push(scanned);
             }
+
+            Map<String,VariableElement> registeredVariables = new HashMap<>();
+            while(!scannedTypes.isEmpty()){
+                TypeElement currentTarget = scannedTypes.pop();
+                currentTarget.getEnclosedElements().stream()
+                        .filter(targetElement -> targetElement instanceof VariableElement)
+                        .filter(this::isQualifiedDerSer)
+                        .map(VariableElement.class::cast)
+                        .forEach(variableElement -> registeredVariables.put(variableElement.getSimpleName().toString(),variableElement));
+            }
+
+            extractAccessibleFields(registeredVariables,mapperScheme);
 
             IdentifierUtils identifierUtils = new IdentifierUtils();
             validateAccessibleConstructor(target, Collections.emptyList());
@@ -371,7 +386,7 @@ public class MapperProcessor extends AbstractProcessor {
     }
 
 
-    private String processSerializer(VariableElement variableElement) throws Exception {
+    private String processSerializer(VariableElement variableElement){
         AnnotationMirror serializer = variableElement.getAnnotationMirrors()
                 .stream()
                 .filter(annotation -> annotation.getAnnotationType().asElement().equals(serializeElement))
@@ -440,7 +455,7 @@ public class MapperProcessor extends AbstractProcessor {
         }
     }
 
-    private String processDeserializer(VariableElement variableElement) throws Exception {
+    private String processDeserializer(VariableElement variableElement) {
         AnnotationMirror deserializer = variableElement.getAnnotationMirrors()
                 .stream()
                 .filter(annotation -> annotation.getAnnotationType().asElement().equals(deserializeElement))
@@ -507,7 +522,6 @@ public class MapperProcessor extends AbstractProcessor {
             String name = field.name;
             String serializerIdentifier = field.serializerIdentifier;
             String deserializerIdentifier = field.deserializerIdentifier;
-
             TypeKind fieldTypeKind = type.getKind();
 
             String writerIdentifier = identifierUtils.createName(fieldApplierType + "Writer");
