@@ -327,7 +327,7 @@ public class MapperProcessor extends AbstractProcessor {
 
             TypeElement scanned = target;
             scannedTypes.push(scanned);
-            while(!objectElement.asType().equals(scanned.getSuperclass())){
+            while(!objectElement.equals(types.asElement(scanned.getSuperclass()))){
                 scanned = (TypeElement) types.asElement(scanned.getSuperclass());
                 scannedTypes.push(scanned);
             }
